@@ -144,6 +144,8 @@ app.post('/api/visits/check-in', async (req, res) => {
             [analystId]
         );
 
+        
+
         if (analyst.rowCount === 0) {
             return res.status(404).json({
                 message: 'Analista não encontrado ou inativo.',
