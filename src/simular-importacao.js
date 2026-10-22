@@ -3,6 +3,7 @@ import { pool } from './db.js';
 
 const caminhoArquivo = './dados/COPASA - FABRIC_29.09.26.xlsx';
 
+
 const limpar = (valor) => {
     if (valor === null || valor === undefined) {
         return null;
@@ -12,6 +13,20 @@ const limpar = (valor) => {
 
     return texto === '' ? null : texto;
 };
+
+
+function limparDadosOriginais(registro) {
+    return Object.fromEntries(
+        Object.entries(registro).map(([chave, valor]) => [
+            chave,
+            typeof valor === 'string'
+                ? (valor.trim() === '' ? null : valor.trim())
+                : valor
+        ])
+    );
+}
+
+
 
 const valorDefinido = (valor) => {
     const texto = String(valor ?? '').trim().toUpperCase();
@@ -45,6 +60,72 @@ async function simularImportacao() {
         const aptos = candidatos.filter(registro =>
             valorDefinido(registro.NETWORK)
         );
+
+
+        const registrosParaImportar = aptos.filter(registro =>
+            limpar(registro.ID) !== null &&
+            limpar(registro.EMPRESA) !== null &&
+            limpar(registro.UNIDADE) !== null &&
+            limpar(registro.NETWORK) !== null
+        );
+
+
+        function mapearUnidade(registro) {
+            return {
+                external_id: limpar(registro.ID),
+                company: limpar(registro.EMPRESA),
+                unit_name: limpar(registro.UNIDADE),
+                address: limpar(registro['ENDEREÇO COMPLETO']),
+                city: limpar(registro.MUNICIPIO),
+
+                network: limpar(registro.NETWORK),
+                hostname: limpar(registro.HOSTNAME),
+                network_to_clone: limpar(registro['NET WORK PARA CLONAR']),
+                coordinates: limpar(registro['COORDENADAS GEOGRÁFICAS']),
+
+                quantity: limpar(registro.QTD) === null
+                    ? null
+                    : Number(registro.QTD),
+
+                equipment_model: limpar(registro.EQUIPAMENTO),
+                vgr_id: limpar(registro['ID VGR']),
+                meraki_lan_network: limpar(registro['REDE LAN MERAKI']),
+                meraki_lan_ip: limpar(registro['IP LAN MERAKI']),
+                dedicated_id: limpar(registro['ID DEDICADO']),
+                internet_id: limpar(registro['ID INTERNET']),
+
+                contracted_speed: limpar(registro['VELOCIDADE DO LINK']),
+                service_type: limpar(registro['PRODUTO ']),
+                carrier: limpar(registro.OPERADORA),
+                lot: limpar(registro.LOTE),
+                fortinet_info: limpar(registro['UNIDADES COM FORTINET']),
+
+                raw_data: limparDadosOriginais(registro)
+            };
+        }
+
+        const amostras = registrosParaImportar
+            .slice(0, 3)
+            .map(mapearUnidade);
+
+        console.log('\n--- Prévia do mapeamento ---');
+        console.dir(amostras, { depth: null });
+
+
+        const registrosInvalidos = aptos.filter(registro =>
+            !registrosParaImportar.includes(registro)
+        );
+
+        console.log(
+            'Registros aprovados na validação final:',
+            registrosParaImportar.length
+        );
+
+        console.log(
+            'Registros para revisão adicional:',
+            registrosInvalidos.length
+        );
+
 
         // 3. Conferir NETWORK repetidos na planilha
         const contagemNetworks = new Map();
