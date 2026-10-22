@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Oviv | Dashboard Operacional</title>
+
+    <link rel="stylesheet" href="./public/style.css">
+    <script src="./public/dashboard.js" defer></script>
+</head>
+
+<body>
+    <header class="topbar">
+        <a class="brand" href="/" aria-label="Oviv - Página inicial">
+            <span class="brand-icon">O</span>
+            <span>
+                <strong>oviv</strong>
+                <small>GESTÃO OPERACIONAL</small>
+            </span>
+        </a>
+
+        <div class="topbar-right">
+            <span id="connection-status" class="connection-status">
+                Conectando...
+            </span>
+
+            <button id="refresh-button" class="refresh-button" type="button">
+                Atualizar dados
+            </button>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="page-heading">
+            <div>
+                <p class="eyebrow">PAINEL GERENCIAL</p>
+                <h1>Visão geral da operação</h1>
+                <p class="subtitle">
+                    Acompanhe visitas, analistas e atividades em campo.
+                </p>
+            </div>
+
+            <div class="update-info">
+                <span>Última atualização</span>
+                <strong id="last-updated">Aguardando dados...</strong>
+            </div>
+        </section>
+
+        <div id="error-message" class="error-message" hidden>
+            Não foi possível carregar os dados do dashboard.
+        </div>
+
+        <section class="stats-grid" aria-label="Indicadores operacionais">
+            <article class="stat-card">
+                <span class="stat-label">Atividades pendentes</span>
+                <strong id="kpi-pending" class="stat-value">—</strong>
+                <span class="stat-description">Aguardando execução</span>
+            </article>
+
+            <article class="stat-card">
+                <span class="stat-label">Em andamento</span>
+                <strong id="kpi-progress" class="stat-value">—</strong>
+                <span class="stat-description">Em deslocamento ou execução</span>
+            </article>
+
+            <article class="stat-card">
+                <span class="stat-label">Com impedimento</span>
+                <strong id="kpi-impediments" class="stat-value">—</strong>
+                <span class="stat-description">Precisam de atenção</span>
+            </article>
+
+            <article class="stat-card">
+                <span class="stat-label">Concluídas hoje</span>
+                <strong id="kpi-completed" class="stat-value">—</strong>
+                <span class="stat-description">Atividades finalizadas no dia</span>
+            </article>
+
+            <article class="stat-card">
+                <span class="stat-label">Visitas abertas</span>
+                <strong id="kpi-visits" class="stat-value">—</strong>
+                <span class="stat-description">Atendimentos não encerrados</span>
+            </article>
+
+            <article class="stat-card">
+                <span class="stat-label">Analistas ativos</span>
+                <strong id="kpi-analysts" class="stat-value">—</strong>
+                <span class="stat-description">Com visitas abertas</span>
+            </article>
+        </section>
+
+        <section class="panel">
+            <div class="panel-heading">
+                <div>
+                    <h2>Acompanhamento em campo</h2>
+                    <p>Visitas abertas e suas respectivas atividades.</p>
+                </div>
+
+                <span id="visit-count" class="count-label">0 visitas</span>
+            </div>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ANALISTA</th>
+                            <th>UNIDADE</th>
+                            <th>CHECK-IN</th>
+                            <th>ATIVIDADES E STATUS</th>
+                        </tr>
+                    </thead>
+
+                    <tbody id="visits-table-body">
+                        <tr>
+                            <td colspan="4" class="empty-state">
+                                Carregando informações...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <footer class="panel-footer">
+                Os dados são consultados diretamente na API do Projeto Oviv.
+            </footer>
+        </section>
+
+        <footer class="page-footer">
+            Oviv — Gestão e acompanhamento operacional
+        </footer>
+    </main>
+</body>
+
+</html>

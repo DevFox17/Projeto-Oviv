@@ -1,10 +1,26 @@
 import express from 'express';
 import { pool } from './db.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+app.use(express.static(path.join(__dirname, '../public')));
+
+app.use(
+    '/public',
+    express.static(path.join(__dirname, '../public'))
+);
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../index.html'));
+});
 
 // Verifica a conexão com o PostgreSQL
 app.get('/api/db-health', async (req, res) => {
@@ -144,7 +160,7 @@ app.post('/api/visits/check-in', async (req, res) => {
             [analystId]
         );
 
-        
+
 
         if (analyst.rowCount === 0) {
             return res.status(404).json({
@@ -200,7 +216,391 @@ app.post('/api/visits/check-in', async (req, res) => {
     }
 });
 
-// Verifica se o servidor está funcionando
+// Cria uma atividade dentro de uma visita
+app.post('/api/visits/:visitId/activities', async (req, res) => {
+    const visitId = Number(req.params.visitId);
+
+    const title = typeof req.body?.title === 'string'
+        ? req.body.title.trim()
+        : '';
+
+    const description = typeof req.body?.description === 'string'
+        ? req.body.description.trim() || null
+        : null;
+
+    if (
+        !Number.isSafeInteger(visitId) ||
+        visitId <= 0 ||
+        !title
+    ) {
+        return res.status(400).json({
+            message: 'Informe uma visita válida e o título da atividade.',
+        });
+    }
+
+    let client;
+    let transacaoAberta = false;
+
+    try {
+        client = await pool.connect();
+
+        await client.query('BEGIN');
+        transacaoAberta = true;
+
+        // Verifica se a visita existe e continua aberta
+        const visitaResult = await client.query(
+            `SELECT id, checked_out_at
+             FROM visits
+             WHERE id = $1
+             FOR UPDATE`,
+            [visitId]
+        );
+
+        if (visitaResult.rowCount === 0) {
+            await client.query('ROLLBACK');
+            transacaoAberta = false;
+
+            return res.status(404).json({
+                message: 'Visita não encontrada.',
+            });
+        }
+
+        if (visitaResult.rows[0].checked_out_at !== null) {
+            await client.query('ROLLBACK');
+            transacaoAberta = false;
+
+            return res.status(409).json({
+                message: 'Não é possível adicionar atividades a uma visita encerrada.',
+            });
+        }
+
+        // Cria a atividade com status inicial PENDENTE
+        const atividadeResult = await client.query(
+            `INSERT INTO activities (
+                visit_id,
+                title,
+                description
+            )
+            VALUES ($1, $2, $3)
+            RETURNING
+                id,
+                visit_id,
+                title,
+                description,
+                status,
+                created_at`,
+            [visitId, title, description]
+        );
+
+        const atividade = atividadeResult.rows[0];
+
+        // Registra o status inicial no histórico
+        await client.query(
+            `INSERT INTO activity_history (
+                activity_id,
+                previous_status,
+                new_status,
+                notes
+            )
+            VALUES ($1, NULL, 'PENDENTE', $2)`,
+            [atividade.id, 'Atividade criada na visita']
+        );
+
+        await client.query('COMMIT');
+        transacaoAberta = false;
+
+        return res.status(201).json({
+            message: 'Atividade criada com sucesso.',
+            activity: atividade,
+        });
+    } catch (error) {
+        if (client && transacaoAberta) {
+            await client.query('ROLLBACK');
+        }
+
+        console.error('Erro ao criar atividade:', error.message);
+
+        return res.status(500).json({
+            message: 'Não foi possível criar a atividade.',
+        });
+    } finally {
+        if (client) {
+            client.release();
+        }
+    }
+});
+
+// Atualiza o status de uma atividade
+app.patch('/api/activities/:activityId/status', async (req, res) => {
+    const activityId = Number(req.params.activityId);
+    const status = req.body?.status;
+
+    const statusesPermitidos = [
+        'PENDENTE',
+        'EM_DESLOCAMENTO',
+        'EM_EXECUCAO',
+        'CONCLUIDA',
+        'IMPEDIMENTO',
+        'CANCELADA',
+    ];
+
+    const notes = typeof req.body?.notes === 'string'
+        ? req.body.notes.trim() || null
+        : null;
+
+    if (!Number.isSafeInteger(activityId) || activityId <= 0) {
+        return res.status(400).json({
+            message: 'Informe um ID de atividade válido.',
+        });
+    }
+
+    if (!statusesPermitidos.includes(status)) {
+        return res.status(400).json({
+            message: 'Status inválido.',
+            statusPermitidos: statusesPermitidos,
+        });
+    }
+
+    let client;
+    let transacaoAberta = false;
+
+    try {
+        client = await pool.connect();
+
+        await client.query('BEGIN');
+        transacaoAberta = true;
+
+        // Busca a atividade e verifica se a visita continua aberta.
+        const consulta = await client.query(
+            `SELECT
+                a.id,
+                a.status,
+                a.started_at,
+                a.completed_at,
+                v.checked_out_at
+             FROM activities a
+             JOIN visits v ON v.id = a.visit_id
+             WHERE a.id = $1
+             FOR UPDATE OF a, v`,
+            [activityId]
+        );
+
+        if (consulta.rowCount === 0) {
+            await client.query('ROLLBACK');
+            transacaoAberta = false;
+
+            return res.status(404).json({
+                message: 'Atividade não encontrada.',
+            });
+        }
+
+        const atividadeAtual = consulta.rows[0];
+
+        if (atividadeAtual.checked_out_at !== null) {
+            await client.query('ROLLBACK');
+            transacaoAberta = false;
+
+            return res.status(409).json({
+                message: 'Não é possível alterar uma atividade de uma visita encerrada.',
+            });
+        }
+
+        if (
+            atividadeAtual.status === 'CONCLUIDA' ||
+            atividadeAtual.status === 'CANCELADA'
+        ) {
+            await client.query('ROLLBACK');
+            transacaoAberta = false;
+
+            return res.status(409).json({
+                message: 'Uma atividade concluída ou cancelada não pode ser alterada.',
+            });
+        }
+
+        if (atividadeAtual.status === status) {
+            await client.query('COMMIT');
+            transacaoAberta = false;
+
+            return res.status(200).json({
+                message: 'A atividade já possui esse status.',
+                activity: {
+                    id: atividadeAtual.id,
+                    status: atividadeAtual.status,
+                },
+            });
+        }
+
+        // Atualiza o status e os horários correspondentes.
+        const resultado = await client.query(
+            `UPDATE activities
+             SET
+                status = $2,
+                started_at = CASE
+                    WHEN $2 = 'EM_EXECUCAO' AND started_at IS NULL
+                    THEN NOW()
+                    ELSE started_at
+                END,
+                completed_at = CASE
+                    WHEN $2 = 'CONCLUIDA' THEN NOW()
+                    ELSE completed_at
+                END,
+                updated_at = NOW()
+             WHERE id = $1
+             RETURNING id, visit_id, title, status,
+                       started_at, completed_at, updated_at`,
+            [activityId, status]
+        );
+
+        // Registra a mudança no histórico.
+        await client.query(
+            `INSERT INTO activity_history (
+                activity_id,
+                previous_status,
+                new_status,
+                notes
+             )
+             VALUES ($1, $2, $3, $4)`,
+            [
+                activityId,
+                atividadeAtual.status,
+                status,
+                notes,
+            ]
+        );
+
+        await client.query('COMMIT');
+        transacaoAberta = false;
+
+        return res.status(200).json({
+            message: 'Status atualizado com sucesso.',
+            activity: resultado.rows[0],
+        });
+    } catch (error) {
+        if (client && transacaoAberta) {
+            await client.query('ROLLBACK');
+        }
+
+        console.error('Erro ao atualizar status:', error.message);
+
+        return res.status(500).json({
+            message: 'Não foi possível atualizar o status da atividade.',
+        });
+    } finally {
+        if (client) {
+            client.release();
+        }
+    }
+});
+
+// Dados operacionais do dashboard gerencial
+app.get('/api/dashboard', async (req, res) => {
+    try {
+        // Indicadores gerais da operação
+        const resumo = await pool.query(`
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM activities a
+                    JOIN visits v ON v.id = a.visit_id
+                    WHERE v.checked_out_at IS NULL
+                      AND a.status = 'PENDENTE'
+                ) AS pending,
+
+                (
+                    SELECT COUNT(*)
+                    FROM activities a
+                    JOIN visits v ON v.id = a.visit_id
+                    WHERE v.checked_out_at IS NULL
+                      AND a.status IN (
+                          'EM_DESLOCAMENTO',
+                          'EM_EXECUCAO'
+                      )
+                ) AS in_progress,
+
+                (
+                    SELECT COUNT(*)
+                    FROM activities a
+                    JOIN visits v ON v.id = a.visit_id
+                    WHERE v.checked_out_at IS NULL
+                      AND a.status = 'IMPEDIMENTO'
+                ) AS impediments,
+
+                (
+                    SELECT COUNT(*)
+                    FROM activities
+                    WHERE status = 'CONCLUIDA'
+                      AND completed_at >= DATE_TRUNC('day', NOW())
+                ) AS completed_today,
+
+                (
+                    SELECT COUNT(*)
+                    FROM visits
+                    WHERE checked_out_at IS NULL
+                ) AS active_visits,
+
+                (
+                    SELECT COUNT(DISTINCT analyst_id)
+                    FROM visits
+                    WHERE checked_out_at IS NULL
+                ) AS active_analysts
+        `);
+
+        // Visitas abertas e atividades de cada analista
+        const operacao = await pool.query(`
+            SELECT
+                v.id AS visit_id,
+                v.check_in_at,
+
+                u.id AS analyst_id,
+                u.name AS analyst_name,
+
+                un.id AS unit_id,
+                un.unit_name,
+                un.city,
+
+                a.id AS activity_id,
+                a.title AS activity_title,
+                a.description AS activity_description,
+                a.status AS activity_status,
+                a.started_at,
+                a.completed_at
+
+            FROM visits v
+
+            JOIN users u
+                ON u.id = v.analyst_id
+
+            JOIN units un
+                ON un.id = v.unit_id
+
+            LEFT JOIN activities a
+                ON a.visit_id = v.id
+
+            WHERE v.checked_out_at IS NULL
+
+            ORDER BY
+                v.check_in_at DESC,
+                a.created_at ASC NULLS LAST
+        `);
+
+        return res.status(200).json({
+            summary: resumo.rows[0],
+            activeVisits: operacao.rows
+        });
+
+    } catch (error) {
+        console.error(
+            'Erro ao consultar o dashboard:',
+            error.message
+        );
+
+        return res.status(500).json({
+            message: 'Não foi possível carregar o dashboard.'
+        });
+    }
+});
+
+
 app.get('/api/health', (req, res) => {
     return res.json({
         status: 'ok',
@@ -208,7 +608,6 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Inicia o servidor
 app.listen(PORT, () => {
     console.log(`Servidor rodando em http://localhost:${PORT}`);
 });
