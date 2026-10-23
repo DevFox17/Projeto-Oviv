@@ -1,358 +1,193 @@
 'use strict';
 
-const STORAGE_KEY = 'oviv_demo_fixed_v1';
-const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
-const MAX_HISTORY_ITEMS = 1000;
+const STORAGE_KEY = 'oviv_project_demo_v1';
 const DEMO_USER = 'Administrador (demo)';
+const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+const MAX_HISTORY_ITEMS = 1500;
+
+const PROJECTS = [
+    {
+        id: 'copasa',
+        name: 'Projeto COPASA',
+        shortName: 'COPASA',
+        description: 'Atividades e configurações lógicas do projeto COPASA.',
+        icon: 'C'
+    },
+    {
+        id: 'cemig',
+        name: 'Projeto CEMIG',
+        shortName: 'CEMIG',
+        description: 'Atividades e configurações lógicas do projeto CEMIG.',
+        icon: 'E'
+    },
+    {
+        id: 'banco-brasil',
+        name: 'Projeto Banco do Brasil',
+        shortName: 'BANCO DO BRASIL',
+        description: 'Atividades e configurações lógicas do projeto Banco do Brasil.',
+        icon: 'B'
+    }
+];
 
 const STATUS = {
-    PENDENTE: {
-        label: 'Pendente',
-        css: 'badge-pending'
-    },
-    EM_DESLOCAMENTO: {
-        label: 'Em deslocamento',
-        css: 'badge-travel'
-    },
-    EM_EXECUCAO: {
-        label: 'Em andamento',
-        css: 'badge-progress'
-    },
-    CONCLUIDA: {
-        label: 'Concluída',
-        css: 'badge-done'
-    },
-    IMPEDIMENTO: {
-        label: 'Impedimento',
-        css: 'badge-blocked'
-    },
-    CANCELADA: {
-        label: 'Cancelada',
-        css: 'badge-cancelled'
-    }
+    PENDENTE: { label: 'Pendente', css: 'status-pending' },
+    EM_CONFIGURACAO: { label: 'Em configuração', css: 'status-configuring' },
+    CONCLUIDA: { label: 'Concluída', css: 'status-completed' },
+    IMPEDIMENTO: { label: 'Impedimento', css: 'status-blocked' },
+    CANCELADA: { label: 'Cancelada', css: 'status-cancelled' }
 };
 
-const TERMINAL = ['CONCLUIDA', 'CANCELADA'];
-
-const $ = (selector, root = document) =>
-    root.querySelector(selector);
-
-const $$ = (selector, root = document) =>
-    [...root.querySelectorAll(selector)];
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 let toastTimer;
+let currentProjectId = null;
 let pendingImport = null;
 
-function minutesAgo(minutes) {
-    return new Date(Date.now() - minutes * 60000).toISOString();
+function newId(prefix = 'act') {
+    if (window.crypto?.randomUUID) {
+        return `${prefix}-${crypto.randomUUID()}`;
+    }
+
+    return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-// Dados fictícios utilizados para iniciar a demonstração.
-function sampleState() {
-    const now = new Date().toISOString();
-
+function demoActivity(id, data, status = 'PENDENTE', adopted = false) {
     return {
-        analysts: [
-            {
-                id: 1,
-                name: 'Ana Martins',
-                email: 'ana.martins@demo.invalid',
-                active: true
-            },
-            {
-                id: 2,
-                name: 'Bruno Costa',
-                email: 'bruno.costa@demo.invalid',
-                active: true
-            },
-            {
-                id: 3,
-                name: 'Camila Rocha',
-                email: 'camila.rocha@demo.invalid',
-                active: true
-            }
-        ],
-
-        units: [
-            {
-                id: 1,
-                code: 'DEMO-001',
-                name: 'Unidade demonstrativa Centro',
-                city: 'Cidade exemplo - MG',
-                sourceKey: null,
-                imported: false
-            },
-            {
-                id: 2,
-                code: 'DEMO-002',
-                name: 'Unidade demonstrativa Norte',
-                city: 'Cidade exemplo - MG',
-                sourceKey: null,
-                imported: false
-            },
-            {
-                id: 3,
-                code: 'DEMO-003',
-                name: 'Unidade demonstrativa Sul',
-                city: 'Cidade exemplo - MG',
-                sourceKey: null,
-                imported: false
-            },
-            {
-                id: 4,
-                code: 'DEMO-004',
-                name: 'Unidade demonstrativa Leste',
-                city: 'Cidade exemplo - MG',
-                sourceKey: null,
-                imported: false
-            }
-        ],
-
-        visits: [
-            {
-                id: 1,
-                analystId: 1,
-                unitId: 1,
-                checkInAt: minutesAgo(84),
-                checkOutAt: null,
-                activities: [
-                    {
-                        id: 1,
-                        title: 'Verificar equipamento',
-                        description:
-                            'Conferir o funcionamento do equipamento demonstrativo.',
-                        status: 'EM_EXECUCAO',
-                        createdAt: minutesAgo(75),
-                        startedAt: minutesAgo(68),
-                        completedAt: null,
-                        notes: []
-                    },
-                    {
-                        id: 2,
-                        title: 'Testar conectividade',
-                        description:
-                            'Validar conectividade usando dados fictícios.',
-                        status: 'PENDENTE',
-                        createdAt: minutesAgo(70),
-                        startedAt: null,
-                        completedAt: null,
-                        notes: []
-                    }
-                ]
-            },
-            {
-                id: 2,
-                analystId: 2,
-                unitId: 2,
-                checkInAt: minutesAgo(43),
-                checkOutAt: null,
-                activities: [
-                    {
-                        id: 3,
-                        title: 'Inspeção de rotina',
-                        description:
-                            'Inspeção ilustrativa para demonstração.',
-                        status: 'EM_DESLOCAMENTO',
-                        createdAt: minutesAgo(38),
-                        startedAt: null,
-                        completedAt: null,
-                        notes: []
-                    },
-                    {
-                        id: 4,
-                        title: 'Conferir configuração',
-                        description: 'Atividade fictícia de exemplo.',
-                        status: 'IMPEDIMENTO',
-                        createdAt: minutesAgo(31),
-                        startedAt: null,
-                        completedAt: null,
-                        notes: []
-                    }
-                ]
-            },
-            {
-                id: 3,
-                analystId: 3,
-                unitId: 3,
-                checkInAt: minutesAgo(240),
-                checkOutAt: minutesAgo(125),
-                activities: [
-                    {
-                        id: 5,
-                        title: 'Revisão de equipamento',
-                        description: 'Serviço demonstrativo concluído.',
-                        status: 'CONCLUIDA',
-                        createdAt: minutesAgo(230),
-                        startedAt: minutesAgo(220),
-                        completedAt: now,
-                        notes: []
-                    }
-                ]
-            }
-        ],
-
-        auditLog: [
-            {
-                id: 1,
-                at: now,
-                action: 'Demonstração iniciada',
-                user: DEMO_USER,
-                detail:
-                    'Dados fictícios carregados. Nenhuma planilha foi importada.'
-            }
-        ],
-
-        nextAnalystId: 4,
-        nextUnitId: 5,
-        nextVisitId: 4,
-        nextActivityId: 6,
-        nextAuditId: 2
+        id,
+        rowKey: `demo-${id}`,
+        rawData: data,
+        title: findTitleFromData(data) || `Atividade ${id}`,
+        identifier: findIdentifierFromData(data) || String(id),
+        city: findCityFromData(data) || '',
+        status,
+        adopted,
+        adoptedBy: adopted ? DEMO_USER : null,
+        adoptedAt: adopted
+            ? new Date(Date.now() - 25 * 60_000).toISOString()
+            : null,
+        createdAt: new Date(Date.now() - 7 * 60_000).toISOString()
     };
 }
 
-function normalizeState(data) {
-    data.analysts = Array.isArray(data.analysts)
-        ? data.analysts
-        : [];
+// Dados inteiramente fictícios para a demonstração.
+function seedData() {
+    const copasaRows = [
+        demoActivity('copasa-1', {
+            ID: 'DEMO-2263651',
+            UNIDADE: 'Unidade demonstrativa COPASA Centro',
+            MUNICIPIO: 'Cidade exemplo - MG',
+            'ID VGR': 'VGR-DEMO-01',
+            'VELOCIDADE DO LINK': 'Exemplo demonstrativo',
+            PRODUTO: 'CONFIGURAÇÃO LÓGICA (DEMO)'
+        }, 'PENDENTE'),
 
-    data.units = Array.isArray(data.units)
-        ? data.units
-        : [];
+        demoActivity('copasa-2', {
+            ID: 'DEMO-2263652',
+            UNIDADE: 'Unidade demonstrativa COPASA Norte',
+            MUNICIPIO: 'Cidade exemplo - MG',
+            'ID VGR': 'VGR-DEMO-02',
+            PRODUTO: 'CONFIGURAÇÃO LÓGICA (DEMO)'
+        }, 'EM_CONFIGURACAO', true),
 
-    data.visits = Array.isArray(data.visits)
-        ? data.visits
-        : [];
+        demoActivity('copasa-3', {
+            ID: 'DEMO-2263653',
+            UNIDADE: 'Unidade demonstrativa COPASA Sul',
+            MUNICIPIO: 'Cidade exemplo - MG',
+            'ID VGR': 'VGR-DEMO-03',
+            PRODUTO: 'CONFIGURAÇÃO LÓGICA (DEMO)'
+        }, 'CONCLUIDA')
+    ];
 
-    data.auditLog = Array.isArray(data.auditLog)
-        ? data.auditLog
-        : [];
+    const cemigRows = [
+        demoActivity('cemig-1', {
+            ID: 'DEMO-CEMIG-001',
+            UNIDADE: 'Unidade demonstrativa CEMIG Centro',
+            MUNICIPIO: 'Cidade exemplo - MG',
+            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
+        }),
 
-    data.units.forEach(unit => {
-        if (!Object.hasOwn(unit, 'sourceKey')) {
-            unit.sourceKey = null;
-        }
-    });
+        demoActivity('cemig-2', {
+            ID: 'DEMO-CEMIG-002',
+            UNIDADE: 'Unidade demonstrativa CEMIG Leste',
+            MUNICIPIO: 'Cidade exemplo - MG',
+            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
+        }, 'IMPEDIMENTO')
+    ];
 
-    data.visits.forEach(visit => {
-        visit.activities = Array.isArray(visit.activities)
-            ? visit.activities
-            : [];
+    const bbRows = [
+        demoActivity('bb-1', {
+            ID: 'DEMO-BB-001',
+            UNIDADE: 'Unidade demonstrativa Banco do Brasil 01',
+            MUNICIPIO: 'Cidade exemplo - DF',
+            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
+        }),
 
-        visit.activities.forEach(activity => {
-            activity.notes = Array.isArray(activity.notes)
-                ? activity.notes
-                : [];
-        });
-    });
+        demoActivity('bb-2', {
+            ID: 'DEMO-BB-002',
+            UNIDADE: 'Unidade demonstrativa Banco do Brasil 02',
+            MUNICIPIO: 'Cidade exemplo - SP',
+            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
+        })
+    ];
 
-    const analystIds = data.analysts.map(
-        item => Number(item.id) + 1
-    );
+    return {
+        version: 1,
 
-    const unitIds = data.units.map(
-        item => Number(item.id) + 1
-    );
+        projects: {
+            copasa: { activities: copasaRows },
+            cemig: { activities: cemigRows },
+            'banco-brasil': { activities: bbRows }
+        },
 
-    const visitIds = data.visits.map(
-        item => Number(item.id) + 1
-    );
-
-    const activityIds = data.visits.flatMap(
-        visit => visit.activities.map(
-            item => Number(item.id) + 1
-        )
-    );
-
-    const auditIds = data.auditLog.map(
-        item => Number(item.id) + 1
-    );
-
-    data.nextAnalystId = Math.max(
-        Number(data.nextAnalystId) || 1,
-        ...analystIds,
-        1
-    );
-
-    data.nextUnitId = Math.max(
-        Number(data.nextUnitId) || 1,
-        ...unitIds,
-        1
-    );
-
-    data.nextVisitId = Math.max(
-        Number(data.nextVisitId) || 1,
-        ...visitIds,
-        1
-    );
-
-    data.nextActivityId = Math.max(
-        Number(data.nextActivityId) || 1,
-        ...activityIds,
-        1
-    );
-
-    data.nextAuditId = Math.max(
-        Number(data.nextAuditId) || 1,
-        ...auditIds,
-        1
-    );
-
-    return data;
+        auditLog: [
+            {
+                id: newId('log'),
+                at: new Date().toISOString(),
+                projectId: null,
+                action: 'Demonstração iniciada',
+                user: DEMO_USER,
+                detail: 'Carregados registros fictícios de exemplo; nenhuma planilha real foi importada.'
+            }
+        ]
+    };
 }
 
 function loadState() {
     try {
-        const stored = localStorage.getItem(STORAGE_KEY);
+        const saved = localStorage.getItem(STORAGE_KEY);
 
-        if (stored) {
-            const parsed = JSON.parse(stored);
+        if (saved) {
+            const parsed = JSON.parse(saved);
 
             if (
                 parsed &&
-                Array.isArray(parsed.analysts) &&
-                Array.isArray(parsed.units) &&
-                Array.isArray(parsed.visits)
+                parsed.projects &&
+                Array.isArray(parsed.auditLog)
             ) {
-                const data = normalizeState(parsed);
+                for (const project of PROJECTS) {
+                    if (!parsed.projects[project.id]) {
+                        parsed.projects[project.id] = { activities: [] };
+                    }
 
-                if (!data.auditLog.length) {
-                    data.auditLog.push({
-                        id: data.nextAuditId++,
-                        at: new Date().toISOString(),
-                        action: 'Histórico ativado',
-                        user: DEMO_USER,
-                        detail:
-                            'O histórico foi habilitado nesta demonstração.'
-                    });
-
-                    localStorage.setItem(
-                        STORAGE_KEY,
-                        JSON.stringify(data)
-                    );
+                    if (!Array.isArray(parsed.projects[project.id].activities)) {
+                        parsed.projects[project.id].activities = [];
+                    }
                 }
 
-                return data;
+                return parsed;
             }
         }
     } catch (error) {
-        console.error(
-            'Falha ao carregar os dados locais:',
-            error
-        );
+        console.error('Falha ao carregar a demonstração:', error);
     }
 
-    const initial = sampleState();
+    const initial = seedData();
 
     try {
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify(initial)
-        );
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
     } catch (error) {
-        console.warn(
-            'Armazenamento local indisponível:',
-            error
-        );
+        console.warn('Não foi possível inicializar o armazenamento local:', error);
     }
 
     return initial;
@@ -362,23 +197,11 @@ let state = loadState();
 
 function saveState() {
     try {
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify(state)
-        );
-
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
         return true;
     } catch (error) {
-        console.error(
-            'Falha ao salvar os dados:',
-            error
-        );
-
-        toast(
-            'O navegador não conseguiu salvar os dados. Verifique o armazenamento local.',
-            true
-        );
-
+        console.error('Não foi possível salvar os dados:', error);
+        toast('O armazenamento local pode estar cheio. Os dados não foram salvos.', true);
         return false;
     }
 }
@@ -393,22 +216,25 @@ function esc(value) {
     })[char]);
 }
 
-function analystById(id) {
-    return state.analysts.find(
-        item => item.id === Number(id)
-    );
+function normalizeText(value) {
+    return String(value ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLocaleLowerCase('pt-BR')
+        .trim();
 }
 
-function unitById(id) {
-    return state.units.find(
-        item => item.id === Number(id)
-    );
+function normalizeHeader(value) {
+    return normalizeText(value)
+        .toUpperCase()
+        .replace(/\s+/g, ' ');
 }
 
-function openVisits() {
-    return state.visits.filter(
-        visit => !visit.checkOutAt
-    );
+function cleanCell(value) {
+    if (value === null || value === undefined) return '';
+    if (value instanceof Date) return value.toISOString();
+
+    return String(value).replace(/\s+/g, ' ').trim();
 }
 
 function formatDateTime(value) {
@@ -417,7 +243,7 @@ function formatDateTime(value) {
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
-        return '—';
+        return String(value);
     }
 
     return new Intl.DateTimeFormat('pt-BR', {
@@ -430,26 +256,15 @@ function isoTime(value) {
     const date = new Date(value);
 
     return Number.isNaN(date.getTime())
-        ? String(value || '')
+        ? String(value ?? '')
         : date.toISOString();
 }
 
-function isToday(value) {
-    if (!value) return false;
-
-    const date = new Date(value);
-    const now = new Date();
-
-    return date.getDate() === now.getDate()
-        && date.getMonth() === now.getMonth()
-        && date.getFullYear() === now.getFullYear();
-}
-
-function toast(message, error = false) {
+function toast(message, isError = false) {
     const element = $('#toast');
 
     element.textContent = message;
-    element.className = error ? 'toast error' : 'toast';
+    element.className = isError ? 'toast error' : 'toast';
     element.hidden = false;
 
     clearTimeout(toastTimer);
@@ -459,14 +274,37 @@ function toast(message, error = false) {
     }, 3800);
 }
 
-function logAction(action, detail) {
-    if (!Array.isArray(state.auditLog)) {
-        state.auditLog = [];
+function getProject(projectId = currentProjectId) {
+    return PROJECTS.find(project => project.id === projectId) || null;
+}
+
+function getProjectData(projectId = currentProjectId) {
+    if (!state.projects[projectId]) {
+        state.projects[projectId] = { activities: [] };
     }
 
+    if (!Array.isArray(state.projects[projectId].activities)) {
+        state.projects[projectId].activities = [];
+    }
+
+    return state.projects[projectId];
+}
+
+function getActivities(projectId = currentProjectId) {
+    return getProjectData(projectId).activities;
+}
+
+function currentActivity(activityId) {
+    return getActivities().find(
+        activity => activity.id === activityId
+    ) || null;
+}
+
+function logAction(action, detail, projectId = currentProjectId) {
     state.auditLog.unshift({
-        id: state.nextAuditId++,
+        id: newId('log'),
         at: new Date().toISOString(),
+        projectId,
         action,
         user: DEMO_USER,
         detail: String(detail || '')
@@ -477,1024 +315,441 @@ function logAction(action, detail) {
     }
 }
 
-function setView(name) {
-    const validViews = [
-        'dashboard',
-        'analysts',
-        'units',
-        'new-visit',
-        'import',
-        'history'
-    ];
+function setView(viewName) {
+    const valid = ['projects', 'dashboard', 'import', 'history'];
 
-    if (!validViews.includes(name)) {
-        name = 'dashboard';
+    if (!valid.includes(viewName)) {
+        viewName = 'projects';
     }
 
-    $$('.view').forEach(view => {
-        view.hidden = view.id !== `view-${name}`;
+    if (viewName === 'projects') {
+        currentProjectId = null;
+    }
+
+    if (viewName !== 'projects' && !currentProjectId) {
+        viewName = 'projects';
+    }
+
+    $('#view-projects').hidden = viewName !== 'projects';
+    $('#project-workspace').hidden = viewName === 'projects';
+
+    ['dashboard', 'import', 'history'].forEach(name => {
+        $(`#view-${name}`).hidden = name !== viewName;
     });
 
-    $$('.nav-button[data-nav]').forEach(button => {
-        button.classList.toggle(
-            'active',
-            button.dataset.nav === name
-        );
+    $$('.project-nav [data-nav]').forEach(button => {
+        button.classList.toggle('active', button.dataset.nav === viewName);
     });
 
-    if (name === 'dashboard') renderDashboard();
-    if (name === 'analysts') renderAnalysts();
-    if (name === 'units') renderUnits();
-    if (name === 'new-visit') renderVisitOptions();
-    if (name === 'history') renderHistory();
-    if (name === 'import') renderImportHelp();
+    if (viewName === 'dashboard') renderDashboard();
+    if (viewName === 'import') resetImportView();
+    if (viewName === 'history') renderHistory();
 
-    if (location.hash !== `#${name}`) {
-        history.replaceState(null, '', `#${name}`);
+    const project = getProject();
+
+    $('#current-project-label').hidden = !project;
+    $('#current-project-label').textContent = project ? project.name : '';
+
+    if (location.hash !== `#${viewName}`) {
+        history.replaceState(null, '', `#${viewName}`);
     }
 }
 
-function renderSummary() {
-    const opened = openVisits();
+function selectProject(projectId) {
+    if (!getProject(projectId)) return;
 
-    const activeActivities = opened.flatMap(
-        visit => visit.activities || []
-    );
+    currentProjectId = projectId;
 
-    const allActivities = state.visits.flatMap(
-        visit => visit.activities || []
-    );
-
-    $('#kpi-pending').textContent =
-        activeActivities.filter(
-            activity => activity.status === 'PENDENTE'
-        ).length;
-
-    $('#kpi-progress').textContent =
-        activeActivities.filter(activity =>
-            ['EM_DESLOCAMENTO', 'EM_EXECUCAO'].includes(
-                activity.status
-            )
-        ).length;
-
-    $('#kpi-impediments').textContent =
-        activeActivities.filter(
-            activity => activity.status === 'IMPEDIMENTO'
-        ).length;
-
-    $('#kpi-completed').textContent =
-        allActivities.filter(activity =>
-            activity.status === 'CONCLUIDA' &&
-            isToday(activity.completedAt)
-        ).length;
-
-    $('#kpi-visits').textContent = opened.length;
-
-    $('#kpi-analysts').textContent =
-        new Set(opened.map(visit => visit.analystId)).size;
-
-    $('#visit-count').textContent =
-        `${opened.length} ${opened.length === 1 ? 'visita' : 'visitas'}`;
-
-    $('#nav-analyst-count').textContent =
-        state.analysts.filter(analyst => analyst.active).length;
-
-    $('#nav-unit-count').textContent = state.units.length;
-    $('#nav-history-count').textContent = state.auditLog.length;
-
-    $('#last-updated').textContent =
-        new Intl.DateTimeFormat(
-            'pt-BR',
-            { timeStyle: 'short' }
-        ).format(new Date());
+    renderProjectCards();
+    setView('dashboard');
 }
 
-function renderActivity(activity, visitId) {
-    const info = STATUS[activity.status] || STATUS.PENDENTE;
-    const locked = TERMINAL.includes(activity.status);
+function renderProjectCards() {
+    $('#project-cards').innerHTML = PROJECTS.map(project => {
+        const activities = getActivities(project.id);
+        const adoptedCount = activities.filter(activity => activity.adopted).length;
 
-    const options = Object.entries(STATUS).map(([value, item]) =>
-        `<option value="${value}" ${
-            value === activity.status ? 'selected' : ''
-        }>${item.label}</option>`
-    ).join('');
-
-    return `
-        <article class="activity">
-            <div>
-                <span class="activity-title">
-                    ${esc(activity.title)}
-                </span>
-
-                ${
-                    activity.description
-                        ? `<span class="activity-description">${esc(activity.description)}</span>`
-                        : ''
-                }
-
-                <div class="activity-meta">
-                    <span class="badge ${info.css}">
-                        ${info.label}
-                    </span>
-
-                    ${
-                        activity.startedAt
-                            ? `<small>Início: ${esc(formatDateTime(activity.startedAt))}</small>`
-                            : ''
-                    }
-
-                    ${
-                        activity.completedAt
-                            ? `<small>Fim: ${esc(formatDateTime(activity.completedAt))}</small>`
-                            : ''
-                    }
+        return `
+            <article class="project-card">
+                <div class="project-card-top">
+                    <span class="project-icon">${esc(project.icon)}</span>
+                    <span class="project-count">${activities.length} atividades</span>
                 </div>
-            </div>
 
-            <div class="activity-controls">
-                <label class="sr-only" for="status-${activity.id}">
-                    Status de ${esc(activity.title)}
-                </label>
+                <h2>${esc(project.name)}</h2>
+                <p>${esc(project.description)}</p>
 
-                <select
-                    class="status-select"
-                    id="status-${activity.id}"
-                    data-status-select
-                    ${locked ? 'disabled' : ''}>
-
-                    ${options}
-                </select>
-
-                <input
-                    class="status-note"
-                    data-status-note
-                    type="text"
-                    maxlength="300"
-                    placeholder="Observação (opcional)"
-                    aria-label="Observação para o histórico"
-                    ${locked ? 'disabled' : ''}>
+                <span class="project-card-meta">
+                    ${adoptedCount} adotadas
+                </span>
 
                 <button
-                    class="button secondary small"
+                    class="button button-primary"
                     type="button"
-                    data-action="save-status"
-                    data-visit-id="${visitId}"
-                    data-activity-id="${activity.id}"
-                    ${locked ? 'disabled' : ''}>
+                    data-action="open-project"
+                    data-project-id="${esc(project.id)}">
 
-                    Salvar
+                    Entrar no projeto →
                 </button>
-            </div>
-        </article>
+            </article>
+        `;
+    }).join('');
+}
+
+function renderSummary(activities) {
+    $('#kpi-total').textContent = activities.length;
+
+    $('#kpi-pending').textContent = activities.filter(
+        activity => activity.status === 'PENDENTE'
+    ).length;
+
+    $('#kpi-adopted').textContent = activities.filter(
+        activity => activity.adopted
+    ).length;
+
+    $('#kpi-configuring').textContent = activities.filter(
+        activity => activity.status === 'EM_CONFIGURACAO'
+    ).length;
+
+    $('#kpi-completed').textContent = activities.filter(
+        activity => activity.status === 'CONCLUIDA'
+    ).length;
+
+    $('#kpi-blocked').textContent = activities.filter(
+        activity => activity.status === 'IMPEDIMENTO'
+    ).length;
+}
+
+function getFieldValue(rawData, aliases) {
+    for (const [key, value] of Object.entries(rawData || {})) {
+        if (!aliases.includes(normalizeHeader(key))) continue;
+
+        const cleaned = cleanCell(value);
+
+        if (cleaned) return cleaned;
+    }
+
+    return '';
+}
+
+function findTitleFromData(rawData) {
+    return getFieldValue(rawData, [
+        'ATIVIDADE',
+        'TITULO',
+        'NOME DA ATIVIDADE',
+        'UNIDADE',
+        'NOME DA UNIDADE',
+        'DESCRICAO',
+        'DESCRIPTION',
+        'TITLE'
+    ]);
+}
+
+function findIdentifierFromData(rawData) {
+    return getFieldValue(rawData, [
+        'ID',
+        'ID LINK',
+        'ID VGR',
+        'ID DEDICADO',
+        'ID INTERNET',
+        'CODIGO',
+        'IDENTIFICADOR'
+    ]);
+}
+
+function findCityFromData(rawData) {
+    return getFieldValue(rawData, [
+        'MUNICIPIO',
+        'CIDADE',
+        'MUNICIPIO DA UNIDADE'
+    ]);
+}
+
+// Pesquisa todos os valores e nomes de colunas importados.
+function searchableText(activity) {
+    const rawText = Object.entries(activity.rawData || {})
+        .map(([key, value]) => `${key} ${cleanCell(value)}`)
+        .join(' ');
+
+    return normalizeText([
+        activity.id,
+        activity.title,
+        activity.identifier,
+        activity.city,
+        activity.status,
+        STATUS[activity.status]?.label,
+        activity.adopted ? 'adotada adotado' : 'não adotada disponível',
+        activity.adoptedBy,
+        rawText
+    ].join(' '));
+}
+
+function statusBadge(status) {
+    const info = STATUS[status] || STATUS.PENDENTE;
+
+    return `
+        <span class="status-badge ${info.css}">
+            ${esc(info.label)}
+        </span>
     `;
 }
 
-function renderVisit(visit) {
-    const analyst = analystById(visit.analystId);
-    const unit = unitById(visit.unitId);
-    const activities = visit.activities || [];
+function renderActivityRows() {
+    const activities = getActivities();
+    const query = normalizeText($('#activity-search').value);
+    const statusFilter = $('#status-filter').value;
+    const adoptionFilter = $('#adoption-filter').value;
 
-    const canClose = activities.length > 0 &&
-        activities.every(
-            activity => TERMINAL.includes(activity.status)
-        );
+    const filtered = activities.filter(activity => {
+        if (query && !searchableText(activity).includes(query)) {
+            return false;
+        }
 
-    const initials = (analyst?.name || '?')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map(word => word[0].toUpperCase())
-        .join('');
+        if (statusFilter && activity.status !== statusFilter) {
+            return false;
+        }
 
-    const activityHTML = activities.length
-        ? activities.map(
-            activity => renderActivity(activity, visit.id)
-        ).join('')
-        : `
-            <div class="empty">
-                Nenhuma atividade cadastrada nesta visita ainda.
-                Adicione o primeiro serviço.
-            </div>
-        `;
+        if (adoptionFilter === 'adopted' && !activity.adopted) {
+            return false;
+        }
 
-    return `
-        <article class="visit-card">
-            <div class="visit-top">
-                <div class="person">
-                    <span class="avatar">
-                        ${esc(initials)}
-                    </span>
+        if (adoptionFilter === 'available' && activity.adopted) {
+            return false;
+        }
 
-                    <div>
-                        <strong>
-                            ${esc(analyst?.name || 'Analista não encontrado')}
-                        </strong>
+        return true;
+    });
 
-                        <small>
-                            Visita #${visit.id} · Check-in
-                            ${esc(formatDateTime(visit.checkInAt))}
-                        </small>
-                    </div>
-                </div>
+    $('#results-count').textContent =
+        `${filtered.length} de ${activities.length} atividades`;
 
-                <div class="visit-buttons">
-                    <button
-                        class="button secondary small"
-                        type="button"
-                        data-action="add-activity"
-                        data-visit-id="${visit.id}">
+    $('#activities-table-body').innerHTML = filtered.map(activity => {
+        const title = activity.title ||
+            findTitleFromData(activity.rawData) ||
+            'Atividade sem título';
 
-                        ＋ Atividade
-                    </button>
+        const identifier = activity.identifier ||
+            findIdentifierFromData(activity.rawData) ||
+            activity.id;
 
-                    <button
-                        class="button secondary small"
-                        type="button"
-                        data-action="close-visit"
-                        data-visit-id="${visit.id}"
-                        ${canClose ? '' : 'disabled'}>
+        const city = activity.city ||
+            findCityFromData(activity.rawData) ||
+            '—';
 
-                        Encerrar visita
-                    </button>
-                </div>
-            </div>
-
-            <div class="unit-strip">
-                <span class="unit-pin">⌖</span>
-
-                <div>
-                    <strong>
-                        ${esc(unit?.name || 'Unidade não encontrada')}
-                    </strong>
-
-                    <small>
-                        ${esc(unit?.code || '')}
-                        ${unit?.city ? ` · ${esc(unit.city)}` : ''}
-                    </small>
-                </div>
-            </div>
-
-            <div class="activity-head">
-                <span>Atividades da visita</span>
-
-                <span>
-                    ${activities.length}
-                    ${activities.length === 1 ? 'atividade' : 'atividades'}
+        const adoptedInfo = activity.adopted
+            ? `
+                <span class="adoption-label adopted">
+                    Adotada<br>
+                    <small>${esc(activity.adoptedBy || DEMO_USER)}</small>
                 </span>
-            </div>
+            `
+            : '<span class="adoption-label">Disponível</span>';
 
-            <div class="activity-list">
-                ${activityHTML}
-            </div>
-        </article>
-    `;
+        const actionButton = activity.adopted
+            ? `
+                <button
+                    class="button button-adopted button-small"
+                    type="button"
+                    disabled>
+
+                    Atividade adotada
+                </button>
+            `
+            : `
+                <button
+                    class="button button-adopt button-small"
+                    type="button"
+                    data-action="adopt-activity"
+                    data-activity-id="${esc(activity.id)}">
+
+                    Adotar atividade
+                </button>
+            `;
+
+        return `
+            <tr
+                class="activity-row"
+                tabindex="0"
+                role="button"
+                aria-label="Visualizar ${esc(title)}"
+                data-action="view-activity"
+                data-activity-id="${esc(activity.id)}">
+
+                <td class="activity-id">
+                    ${esc(identifier)}
+                </td>
+
+                <td>
+                    <span class="activity-name">${esc(title)}</span>
+                    <span class="activity-subtitle">
+                        Clique na linha para ver todos os campos
+                    </span>
+                </td>
+
+                <td>${esc(city)}</td>
+                <td>${statusBadge(activity.status)}</td>
+                <td>${adoptedInfo}</td>
+                <td>${actionButton}</td>
+            </tr>
+        `;
+    }).join('');
+
+    $('#activities-empty').hidden = filtered.length > 0;
+
+    renderSummary(activities);
 }
 
 function renderDashboard() {
-    renderSummary();
+    const project = getProject();
 
-    const visits = openVisits().sort(
-        (a, b) => new Date(b.checkInAt) - new Date(a.checkInAt)
-    );
-
-    $('#visits-container').innerHTML = visits.length
-        ? visits.map(renderVisit).join('')
-        : `
-            <div class="empty">
-                <strong>Nenhuma visita aberta</strong>
-                <p>Inicie uma visita para começar o acompanhamento.</p>
-
-                <button
-                    class="button primary"
-                    type="button"
-                    data-nav="new-visit">
-
-                    ＋ Iniciar visita
-                </button>
-            </div>
-        `;
-}
-
-function renderAnalysts() {
-    $('#analyst-count').textContent =
-        `${state.analysts.length} ${
-            state.analysts.length === 1 ? 'analista' : 'analistas'
-        }`;
-
-    const opened = openVisits();
-
-    $('#analysts-list').innerHTML = state.analysts.length
-        ? [...state.analysts]
-            .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
-            .map(analyst => {
-                const visit = opened.find(
-                    item => item.analystId === analyst.id
-                );
-
-                const initials = analyst.name
-                    .trim()
-                    .split(/\s+/)
-                    .filter(Boolean)
-                    .slice(0, 2)
-                    .map(word => word[0].toUpperCase())
-                    .join('');
-
-                const label = !analyst.active
-                    ? 'Inativo'
-                    : visit
-                        ? 'Em visita'
-                        : 'Disponível';
-
-                const badge = !analyst.active
-                    ? 'badge-cancelled'
-                    : visit
-                        ? 'badge-progress'
-                        : 'badge-done';
-
-                return `
-                    <article class="entity-row">
-                        <span class="avatar">
-                            ${esc(initials)}
-                        </span>
-
-                        <div class="entity-main">
-                            <strong>${esc(analyst.name)}</strong>
-                            <small>${esc(analyst.email)}</small>
-                        </div>
-
-                        <div class="entity-actions">
-                            <span class="badge ${badge}">
-                                ${label}
-                            </span>
-
-                            <button
-                                class="button secondary small"
-                                type="button"
-                                data-action="toggle-analyst"
-                                data-analyst-id="${analyst.id}"
-                                ${visit ? 'disabled title="Encerre a visita antes de desativar"' : ''}>
-
-                                ${analyst.active ? 'Desativar' : 'Reativar'}
-                            </button>
-                        </div>
-                    </article>
-                `;
-            }).join('')
-        : `
-            <div class="empty">
-                Nenhum analista cadastrado.
-                Use o formulário para adicionar o primeiro.
-            </div>
-        `;
-}
-
-function renderUnits() {
-    $('#unit-count').textContent =
-        `${state.units.length} ${
-            state.units.length === 1 ? 'unidade' : 'unidades'
-        }`;
-
-    $('#units-list').innerHTML = state.units.length
-        ? [...state.units]
-            .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
-            .map(unit => {
-                const used = state.visits.some(
-                    visit => visit.unitId === unit.id
-                );
-
-                const active = openVisits().some(
-                    visit => visit.unitId === unit.id
-                );
-
-                return `
-                    <article class="entity-row">
-                        <span class="mini-symbol">⌖</span>
-
-                        <div class="entity-main">
-                            <strong>${esc(unit.name)}</strong>
-
-                            <small>
-                                ${esc(unit.code)}
-                                ${unit.city ? ` · ${esc(unit.city)}` : ''}
-                                ${unit.imported ? ' · IMPORTADA' : ''}
-                            </small>
-                        </div>
-
-                        <div class="entity-actions">
-                            <span class="badge ${
-                                active ? 'badge-progress' : 'badge-done'
-                            }">
-                                ${active ? 'Em atendimento' : 'Disponível'}
-                            </span>
-
-                            <button
-                                class="button secondary small"
-                                type="button"
-                                data-action="delete-unit"
-                                data-unit-id="${unit.id}"
-                                ${used ? 'disabled title="Há visitas associadas a esta unidade"' : ''}>
-
-                                Remover
-                            </button>
-                        </div>
-                    </article>
-                `;
-            }).join('')
-        : `
-            <div class="empty">
-                Nenhuma unidade cadastrada.
-                Use o formulário ou importe uma planilha.
-            </div>
-        `;
-
-    renderVisitOptions();
-}
-
-function renderVisitOptions() {
-    const analystSelect = $('#visit-analyst');
-    const unitSelect = $('#visit-unit');
-
-    if (!analystSelect || !unitSelect) return;
-
-    const oldAnalyst = analystSelect.value;
-    const oldUnit = unitSelect.value;
-
-    const available = state.analysts.filter(
-        analyst => analyst.active &&
-            !openVisits().some(
-                visit => visit.analystId === analyst.id
-            )
-    );
-
-    analystSelect.innerHTML =
-        '<option value="">Selecione um analista</option>' +
-        available.map(analyst =>
-            `<option value="${analyst.id}">${esc(analyst.name)}</option>`
-        ).join('');
-
-    unitSelect.innerHTML =
-        '<option value="">Selecione uma unidade</option>' +
-        state.units.map(unit =>
-            `<option value="${unit.id}">${esc(unit.name)} · ${esc(unit.code)}</option>`
-        ).join('');
-
-    if (available.some(
-        analyst => String(analyst.id) === oldAnalyst
-    )) {
-        analystSelect.value = oldAnalyst;
-    }
-
-    if (state.units.some(
-        unit => String(unit.id) === oldUnit
-    )) {
-        unitSelect.value = oldUnit;
-    }
-
-    const hint = $('#visit-form-hint');
-
-    if (!available.length) {
-        hint.textContent =
-            'Não há analistas disponíveis. Cadastre ou reative um analista, ou encerre uma visita aberta.';
-    } else if (!state.units.length) {
-        hint.textContent =
-            'Cadastre uma unidade antes de registrar o check-in.';
-    } else {
-        hint.textContent =
-            'Check-in manual, sem GPS. Um analista só pode ter uma visita aberta por vez.';
-    }
-
-    $('#visit-form button[type="submit"]').disabled =
-        !available.length || !state.units.length;
-}
-
-/* CADASTRO DE ANALISTAS */
-
-function createAnalyst(event) {
-    event.preventDefault();
-
-    const name = $('#analyst-name').value.trim();
-    const email = $('#analyst-email').value.trim().toLowerCase();
-
-    if (!name || !email) return;
-
-    if (state.analysts.some(
-        analyst => analyst.email.toLowerCase() === email
-    )) {
-        toast(
-            'Já existe um analista com esse e-mail demonstrativo.',
-            true
-        );
+    if (!project) {
+        setView('projects');
         return;
     }
 
-    const analyst = {
-        id: state.nextAnalystId++,
-        name,
-        email,
-        active: true
-    };
+    $('#project-eyebrow').textContent = `PROJETO ${project.shortName}`;
+    $('#dashboard-title').textContent = `Atividades — ${project.name}`;
 
-    state.analysts.push(analyst);
+    renderSummary(getActivities());
+    renderActivityRows();
+}
+
+function renderActivityDetails(activityId) {
+    const activity = currentActivity(activityId);
+
+    if (!activity) {
+        toast('Atividade não encontrada neste projeto.', true);
+        return;
+    }
+
+    const fields = Object.entries(activity.rawData || {});
+
+    $('#detail-title').textContent =
+        activity.title || 'Detalhes da atividade';
+
+    $('#detail-subtitle').textContent =
+        `Identificador: ${activity.identifier || activity.id} · ${
+            STATUS[activity.status]?.label || activity.status
+        } · ${activity.adopted ? 'Adotada' : 'Não adotada'}`;
+
+    const metadata = [
+        ['Status no Oviv', STATUS[activity.status]?.label || activity.status],
+        [
+            'Adoção',
+            activity.adopted
+                ? `Adotada por ${activity.adoptedBy || DEMO_USER} em ${formatDateTime(activity.adoptedAt)}`
+                : 'Ainda não adotada'
+        ],
+        ['Importada em', formatDateTime(activity.createdAt)]
+    ];
+
+    const allFields = [
+        ...metadata,
+        ...fields.map(([key, value]) => [key, cleanCell(value) || '—'])
+    ];
+
+    $('#activity-detail-fields').innerHTML = allFields.map(([key, value]) => `
+        <div class="detail-field">
+            <strong>${esc(key)}</strong>
+            <span>${esc(value)}</span>
+        </div>
+    `).join('');
+
+    // Essa janela é somente para visualização.
+    // Ela não adota a atividade nem modifica seu status.
+    $('#activity-detail-dialog').showModal();
+}
+
+function adoptActivity(activityId) {
+    const activity = currentActivity(activityId);
+
+    if (!activity) {
+        toast('Atividade não encontrada neste projeto.', true);
+        return;
+    }
+
+    if (activity.adopted) {
+        toast('Esta atividade já foi adotada.', true);
+        return;
+    }
+
+    const title = activity.title || activity.identifier || activity.id;
+
+    if (!confirm(`Adotar a atividade "${title}" nesta demonstração?`)) {
+        return;
+    }
+
+    activity.adopted = true;
+    activity.adoptedBy = DEMO_USER;
+    activity.adoptedAt = new Date().toISOString();
 
     logAction(
-        'Analista cadastrado',
-        `${analyst.name} (${analyst.email}) foi adicionado à demonstração.`
+        'Atividade adotada',
+        `${activity.identifier || activity.id} · ${activity.title || 'Atividade sem título'}`
     );
 
     if (!saveState()) return;
 
-    event.currentTarget.reset();
+    renderAllCurrentProject();
 
-    renderAll();
-    setView('analysts');
-
-    toast('Analista cadastrado nesta demonstração.');
+    toast('Atividade adotada. A ação foi adicionada ao histórico.');
 }
 
-/* CADASTRO DE UNIDADES */
-
-function createUnit(event) {
-    event.preventDefault();
-
-    const code = $('#unit-code').value.trim().toUpperCase();
-    const name = $('#unit-name').value.trim();
-    const city = $('#unit-city').value.trim();
-
-    if (!code || !name) return;
-
-    if (state.units.some(
-        unit => unit.code.toLowerCase() === code.toLowerCase()
-    )) {
-        toast('Este código demonstrativo já existe.', true);
-        return;
-    }
-
-    const unit = {
-        id: state.nextUnitId++,
-        code,
-        name,
-        city,
-        sourceKey: null,
-        imported: false
-    };
-
-    state.units.push(unit);
-
-    logAction(
-        'Unidade cadastrada',
-        `${unit.code} · ${unit.name}${unit.city ? ` · ${unit.city}` : ''}.`
-    );
-
-    if (!saveState()) return;
-
-    event.currentTarget.reset();
-
-    renderAll();
-    setView('units');
-
-    toast('Unidade cadastrada nesta demonstração.');
-}
-
-/* VISITAS E CHECK-IN */
-
-function createVisit(event) {
-    event.preventDefault();
-
-    const analystId = Number($('#visit-analyst').value);
-    const unitId = Number($('#visit-unit').value);
-
-    const analyst = analystById(analystId);
-    const unit = unitById(unitId);
-
-    if (!analyst || !analyst.active || !unit) {
-        toast(
-            'Selecione um analista ativo e uma unidade válida.',
-            true
-        );
-        return;
-    }
-
-    if (openVisits().some(
-        visit => visit.analystId === analystId
-    )) {
-        toast(
-            'Este analista já possui uma visita aberta.',
-            true
-        );
-        return;
-    }
-
-    const visit = {
-        id: state.nextVisitId++,
-        analystId,
-        unitId,
-        checkInAt: new Date().toISOString(),
-        checkOutAt: null,
-        activities: []
-    };
-
-    state.visits.push(visit);
-
-    logAction(
-        'Check-in registrado',
-        `Visita #${visit.id} · ${analyst.name} · ${unit.code} — ${unit.name}.`
-    );
-
-    if (!saveState()) return;
-
-    event.currentTarget.reset();
-
-    renderAll();
-    setView('dashboard');
-
-    toast(
-        `Check-in de ${analyst.name} registrado na demonstração.`
-    );
-}
-
-/* CRIAÇÃO DE ATIVIDADES */
-
-function openActivity(visitId) {
-    const visit = state.visits.find(
-        item => item.id === Number(visitId) && !item.checkOutAt
-    );
-
-    if (!visit) {
-        toast('Visita não encontrada ou já encerrada.', true);
-        return;
-    }
-
-    const analyst = analystById(visit.analystId);
-    const unit = unitById(visit.unitId);
-
-    $('#activity-visit-id').value = String(visit.id);
-
-    $('#activity-visit-label').textContent =
-        `${analyst?.name || 'Analista'} · ${unit?.name || 'Unidade'} · Visita #${visit.id}`;
-
-    $('#activity-title').value = '';
-    $('#activity-description').value = '';
-
-    $('#activity-dialog').showModal();
-    $('#activity-title').focus();
-}
-
-function createActivity(event) {
-    event.preventDefault();
-
-    const visitId = Number($('#activity-visit-id').value);
-    const title = $('#activity-title').value.trim();
-    const description = $('#activity-description').value.trim();
-
-    const visit = state.visits.find(
-        item => item.id === visitId && !item.checkOutAt
-    );
-
-    if (!visit || !title) {
-        toast(
-            'Informe o título de uma atividade para uma visita aberta.',
-            true
-        );
-        return;
-    }
-
-    const activity = {
-        id: state.nextActivityId++,
-        title,
-        description,
-        status: 'PENDENTE',
-        createdAt: new Date().toISOString(),
-        startedAt: null,
-        completedAt: null,
-        notes: []
-    };
-
-    visit.activities.push(activity);
-
-    const analyst = analystById(visit.analystId);
-    const unit = unitById(visit.unitId);
-
-    logAction(
-        'Atividade criada',
-        `Atividade #${activity.id} · ${activity.title} · Visita #${visit.id} · ${analyst?.name || 'Analista'} · ${unit?.name || 'Unidade'} · Status PENDENTE.`
-    );
-
-    if (!saveState()) return;
-
-    $('#activity-dialog').close();
-
-    renderAll();
-    toast('Atividade criada com status Pendente.');
-}
-
-/* ATUALIZAÇÃO DE STATUS */
-
-function saveActivityStatus(button) {
-    const visit = state.visits.find(
-        item => item.id === Number(button.dataset.visitId) &&
-            !item.checkOutAt
-    );
-
-    const activity = visit?.activities.find(
-        item => item.id === Number(button.dataset.activityId)
-    );
-
-    const controls = button.closest('.activity-controls');
-
-    const select = controls?.querySelector(
-        '[data-status-select]'
-    );
-
-    const noteInput = controls?.querySelector(
-        '[data-status-note]'
-    );
-
-    const nextStatus = select?.value;
-    const note = noteInput?.value.trim() || '';
-
-    if (!visit || !activity) {
-        toast(
-            'Atividade não encontrada ou visita encerrada.',
-            true
-        );
-        return;
-    }
-
-    if (TERMINAL.includes(activity.status)) {
-        toast(
-            'Atividades concluídas ou canceladas não podem ser alteradas nesta demonstração.',
-            true
-        );
-        return;
-    }
-
-    if (!STATUS[nextStatus]) {
-        toast('Selecione um status válido.', true);
-        return;
-    }
-
-    if (nextStatus === activity.status && !note) {
-        toast(
-            'Selecione um novo status ou informe uma observação.',
-            true
-        );
-        return;
-    }
-
-    const previousStatus = activity.status;
-    const now = new Date().toISOString();
-
-    if (
-        nextStatus === 'EM_EXECUCAO' &&
-        !activity.startedAt
-    ) {
-        activity.startedAt = now;
-    }
-
-    if (nextStatus === 'CONCLUIDA') {
-        activity.completedAt = now;
-    }
-
-    activity.status = nextStatus;
-
-    if (!Array.isArray(activity.notes)) {
-        activity.notes = [];
-    }
-
-    activity.notes.push({
-        at: now,
-        previousStatus,
-        status: nextStatus,
-        note
-    });
-
-    const analyst = analystById(visit.analystId);
-
-    const detail = previousStatus === nextStatus
-        ? `Observação registrada para a atividade #${activity.id} · ${activity.title}.`
-        : `Atividade #${activity.id} · ${activity.title} · ${STATUS[previousStatus]?.label || previousStatus} → ${STATUS[nextStatus].label}.`;
-
-    logAction(
-        previousStatus === nextStatus
-            ? 'Observação registrada'
-            : 'Status atualizado',
-        `${detail}${note ? ` Observação: ${note}` : ''} Responsável: ${analyst?.name || 'Analista'}.`
-    );
-
-    if (!saveState()) return;
-
-    renderAll();
-
-    toast(
-        previousStatus === nextStatus
-            ? 'Observação adicionada ao histórico.'
-            : 'Status da atividade atualizado.'
-    );
-}
-
-/* ENCERRAMENTO DE VISITA */
-
-function closeVisit(button) {
-    const visit = state.visits.find(
-        item => item.id === Number(button.dataset.visitId) &&
-            !item.checkOutAt
-    );
-
-    if (!visit) return;
-
-    if (
-        !visit.activities.length ||
-        !visit.activities.every(
-            activity => TERMINAL.includes(activity.status)
-        )
-    ) {
-        toast(
-            'Conclua ou cancele todas as atividades antes de encerrar a visita.',
-            true
-        );
-        return;
-    }
-
-    const analyst = analystById(visit.analystId);
-    const unit = unitById(visit.unitId);
-
-    if (!confirm(
-        `Encerrar a visita de ${analyst?.name || 'este analista'}?`
-    )) {
-        return;
-    }
-
-    visit.checkOutAt = new Date().toISOString();
-
-    logAction(
-        'Visita encerrada',
-        `Visita #${visit.id} · ${analyst?.name || 'Analista'} · ${unit?.name || 'Unidade'} · ${visit.activities.length} atividades.`
-    );
-
-    if (!saveState()) return;
-
-    renderAll();
-    toast('Visita encerrada.');
-}
-
-/* ATIVAÇÃO DE ANALISTAS */
-
-function toggleAnalyst(button) {
-    const analyst = analystById(
-        Number(button.dataset.analystId)
-    );
-
-    if (!analyst) return;
-
-    if (openVisits().some(
-        visit => visit.analystId === analyst.id
-    )) {
-        toast(
-            'Encerre a visita antes de desativar o analista.',
-            true
-        );
-        return;
-    }
-
-    analyst.active = !analyst.active;
-
-    logAction(
-        analyst.active
-            ? 'Analista reativado'
-            : 'Analista desativado',
-        `${analyst.name} (${analyst.email}).`
-    );
-
-    if (!saveState()) return;
-
-    renderAll();
-    setView('analysts');
-
-    toast(
-        analyst.active
-            ? 'Analista reativado.'
-            : 'Analista desativado.'
-    );
-}
-
-/* REMOÇÃO DE UNIDADES */
-
-function deleteUnit(button) {
-    const id = Number(button.dataset.unitId);
-
-    if (state.visits.some(visit => visit.unitId === id)) {
-        toast(
-            'Esta unidade possui visitas associadas e não pode ser removida.',
-            true
-        );
-        return;
-    }
-
-    const unit = unitById(id);
-
-    if (!unit || !confirm(
-        `Remover a unidade "${unit.name}" desta demonstração?`
-    )) {
-        return;
-    }
-
-    state.units = state.units.filter(
-        item => item.id !== id
-    );
-
-    logAction(
-        'Unidade removida',
-        `${unit.code} · ${unit.name}.`
-    );
-
-    if (!saveState()) return;
-
-    renderAll();
-    setView('units');
-
-    toast('Unidade removida.');
-}
-
-/* RESTAURAÇÃO DOS DADOS DE EXEMPLO */
-
-function resetDemo() {
-    if (!confirm(
-        'Restaurar os dados de exemplo? As alterações e o histórico desta demonstração neste navegador serão substituídos.'
-    )) {
-        return;
-    }
-
-    state = sampleState();
-
-    logAction(
-        'Demonstração restaurada',
-        'Os dados fictícios de exemplo foram restaurados.'
-    );
-
-    if (!saveState()) return;
-
-    renderAll();
-    setView('dashboard');
-
-    toast('Dados de exemplo restaurados.');
-}
-
-/* IMPORTAÇÃO LOCAL DE EXCEL E CSV */
-
-function renderImportHelp() {
-    const fileInput = $('#import-file');
-
-    if (
-        fileInput &&
-        !fileInput.files.length &&
-        !pendingImport
-    ) {
-        $('#import-preview').classList.add('preview-hidden');
+function renderAllCurrentProject() {
+    renderProjectCards();
+
+    if (currentProjectId) {
+        renderDashboard();
+        renderHistory();
     }
 }
 
-function normalizeHeader(value) {
-    return String(value ?? '')
-        .replace(/^\uFEFF/, '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim()
-        .toUpperCase()
-        .replace(/\s+/g, ' ');
+/* IMPORTAÇÃO LOCAL */
+
+function renderImportView() {
+    $('#import-preview').hidden = true;
+    $('#import-summary').textContent = '';
+    $('#import-preview-body').innerHTML = '';
+    $('#confirm-import').disabled = true;
 }
 
-function cleanCell(value) {
-    if (value === null || value === undefined) return '';
-
-    return String(value)
-        .replace(/\s+/g, ' ')
-        .trim();
+function resetImportView() {
+    if (!pendingImport) {
+        renderImportView();
+    }
 }
 
-// Chave técnica local de deduplicação.
-// Não é um hash criptográfico nem representa anonimização.
-function makeSourceKey(id, name, city) {
-    const text = [
-        cleanCell(id),
-        cleanCell(name).toLocaleLowerCase('pt-BR'),
-        cleanCell(city).toLocaleLowerCase('pt-BR')
-    ].join('|');
+function stableFingerprint(rawData) {
+    const canonical = Object.keys(rawData)
+        .sort((a, b) => a.localeCompare(b))
+        .map(key => `${normalizeText(key)}=${normalizeText(rawData[key])}`)
+        .join('|');
 
     let hash = 2166136261;
 
-    for (let i = 0; i < text.length; i++) {
-        hash ^= text.charCodeAt(i);
+    for (let i = 0; i < canonical.length; i++) {
+        hash ^= canonical.charCodeAt(i);
         hash = Math.imul(hash, 16777619);
     }
 
-    return `src-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+    return `row-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-function findColumn(headers, aliases) {
-    return headers.find(header =>
-        aliases.includes(normalizeHeader(header))
-    );
+function toSafeRawData(row) {
+    const result = {};
+
+    for (const [key, value] of Object.entries(row)) {
+        const header = String(key || '').trim();
+
+        if (!header) continue;
+        if (value === null || value === undefined || cleanCell(value) === '') {
+            continue;
+        }
+
+        result[header] = cleanCell(value).slice(0, 4000);
+    }
+
+    return result;
 }
 
 async function prepareImport(event) {
@@ -1508,16 +763,13 @@ async function prepareImport(event) {
     }
 
     if (file.size > MAX_IMPORT_BYTES) {
-        toast(
-            'O arquivo ultrapassa 20 MB, limite desta demonstração.',
-            true
-        );
+        toast('O arquivo ultrapassa 20 MB, limite desta demonstração.', true);
         return;
     }
 
     if (!window.XLSX) {
         toast(
-            'A biblioteca Excel não carregou. Confira a conexão e atualize a página.',
+            'A biblioteca Excel não foi carregada. Confira sua conexão e atualize a página.',
             true
         );
         return;
@@ -1526,310 +778,224 @@ async function prepareImport(event) {
     const extension = file.name.split('.').pop().toLowerCase();
 
     if (!['xlsx', 'xls', 'csv'].includes(extension)) {
-        toast(
-            'Formato não suportado. Escolha XLSX, XLS ou CSV.',
-            true
-        );
+        toast('Formato não suportado. Escolha XLSX, XLS ou CSV.', true);
         return;
     }
 
-    const preview = $('#import-preview');
-
-    preview.classList.remove('preview-hidden');
-
-    $('#import-summary').textContent =
-        'Lendo a planilha neste navegador…';
-
+    $('#import-preview').hidden = false;
+    $('#import-summary').textContent = 'Analisando o arquivo neste navegador…';
     $('#import-preview-body').innerHTML = '';
     $('#confirm-import').disabled = true;
 
     try {
-        // A leitura ocorre localmente. O arquivo não é enviado ao servidor.
-        const buffer = await file.arrayBuffer();
-
+        // O arquivo é lido localmente e não é enviado para o servidor.
         const workbook = window.XLSX.read(
-            buffer,
+            await file.arrayBuffer(),
             { type: 'array' }
         );
 
-        const firstSheet = workbook.SheetNames[0];
+        const sheetName = workbook.SheetNames[0];
 
-        if (!firstSheet) {
-            throw new Error(
-                'Não foi encontrada nenhuma aba na planilha.'
-            );
+        if (!sheetName) {
+            throw new Error('Nenhuma aba foi encontrada no arquivo.');
         }
 
-        const worksheet = workbook.Sheets[firstSheet];
+        const worksheet = workbook.Sheets[sheetName];
 
-        const rows = window.XLSX.utils.sheet_to_json(
-            worksheet,
-            {
-                defval: null,
-                raw: false
-            }
-        );
+        const rows = window.XLSX.utils.sheet_to_json(worksheet, {
+            defval: '',
+            raw: false
+        });
 
         if (!rows.length) {
-            throw new Error(
-                'A primeira aba não contém linhas de dados.'
-            );
+            throw new Error('A primeira aba não contém linhas de dados.');
         }
 
-        const headers = Object.keys(rows[0]);
+        const validRows = [];
+        let ignored = 0;
+        let duplicates = 0;
 
-        const idColumn = findColumn(headers, [
-            'ID',
-            'CODIGO',
-            'CODIGO DA UNIDADE',
-            'CODIGO UNIDADE'
-        ]);
-
-        const nameColumn = findColumn(headers, [
-            'UNIDADE',
-            'NOME DA UNIDADE',
-            'NOME UNIDADE'
-        ]);
-
-        const cityColumn = findColumn(headers, [
-            'MUNICIPIO',
-            'CIDADE',
-            'MUNICIPIO DA UNIDADE'
-        ]);
-
-        if (!idColumn || !nameColumn) {
-            throw new Error(
-                'Não encontrei as colunas ID e UNIDADE. Confira os cabeçalhos da primeira linha.'
-            );
-        }
-
-        const prepared = [];
-        const seenIds = new Set();
-
-        let invalidRows = 0;
-        let duplicatesInFile = 0;
-
-        for (const row of rows) {
-            const externalId = cleanCell(row[idColumn]);
-            const name = cleanCell(row[nameColumn]);
-            const city = cityColumn
-                ? cleanCell(row[cityColumn])
-                : '';
-
-            // Somente ID numérico, nome da unidade e município.
-            // As demais colunas são descartadas.
-            if (!/^\d+$/.test(externalId) || !name) {
-                invalidRows++;
-                continue;
-            }
-
-            if (seenIds.has(externalId)) {
-                duplicatesInFile++;
-                continue;
-            }
-
-            seenIds.add(externalId);
-
-            const sourceKey = makeSourceKey(
-                externalId,
-                name,
-                city
-            );
-
-            prepared.push({
-                sourceKey,
-                name,
-                city
-            });
-        }
-
-        if (!prepared.length) {
-            throw new Error(
-                'Nenhuma unidade válida foi encontrada. São necessárias as colunas ID e UNIDADE.'
-            );
-        }
-
-        const existingKeys = new Set(
-            state.units
-                .map(unit => unit.sourceKey)
+        const existingFingerprints = new Set(
+            getActivities()
+                .map(activity => activity.rowKey)
                 .filter(Boolean)
         );
 
-        const alreadyImported = prepared.filter(
-            unit => existingKeys.has(unit.sourceKey)
-        ).length;
+        const seen = new Set();
 
-        const newItems = prepared.filter(
-            unit => !existingKeys.has(unit.sourceKey)
-        );
+        for (const sourceRow of rows) {
+            const rawData = toSafeRawData(sourceRow);
+
+            if (!Object.keys(rawData).length) {
+                ignored++;
+                continue;
+            }
+
+            const title = findTitleFromData(rawData);
+            const identifier = findIdentifierFromData(rawData);
+
+            if (!title && !identifier) {
+                ignored++;
+                continue;
+            }
+
+            const rowKey = stableFingerprint(rawData);
+
+            if (existingFingerprints.has(rowKey) || seen.has(rowKey)) {
+                duplicates++;
+                continue;
+            }
+
+            seen.add(rowKey);
+
+            validRows.push({
+                id: newId('activity'),
+                rowKey,
+                rawData,
+                title: title || `Atividade ${identifier}`,
+                identifier: identifier || rowKey,
+                city: findCityFromData(rawData),
+                status: 'PENDENTE',
+                adopted: false,
+                adoptedBy: null,
+                adoptedAt: null,
+                createdAt: new Date().toISOString()
+            });
+        }
+
+        if (!validRows.length) {
+            throw new Error(
+                'Nenhuma nova linha válida foi encontrada. Confira se há campos como ID, UNIDADE ou ATIVIDADE.'
+            );
+        }
 
         pendingImport = {
-            items: newItems,
-            totalValid: prepared.length,
-            invalidRows,
-            duplicatesInFile,
-            alreadyImported
+            projectId: currentProjectId,
+            rows: validRows,
+            totalRows: rows.length,
+            ignored,
+            duplicates,
+            fileName: file.name
         };
 
         renderImportPreview();
 
     } catch (error) {
-        console.error(
-            'Erro ao analisar a planilha:',
-            error
-        );
+        console.error('Falha na leitura da planilha:', error);
 
         pendingImport = null;
-
-        preview.classList.remove('preview-hidden');
 
         $('#import-summary').textContent =
             error.message || 'Não foi possível ler a planilha.';
 
-        $('#import-preview-body').innerHTML = '';
-        $('#import-preview-count').textContent = 'Falha na análise';
         $('#confirm-import').disabled = true;
 
-        toast(
-            error.message || 'Não foi possível analisar o arquivo.',
-            true
-        );
+        toast(error.message || 'Não foi possível analisar o arquivo.', true);
     }
 }
 
 function renderImportPreview() {
     if (!pendingImport) return;
 
-    const tableRows = pendingImport.items
-        .slice(0, 15)
-        .map((item, index) => {
-            const code =
-                `IMP-${String(state.nextUnitId + index).padStart(4, '0')}`;
-
-            return `
-                <tr>
-                    <td>${code}</td>
-                    <td>${esc(item.name)}</td>
-                    <td>${esc(item.city || '—')}</td>
-                    <td class="row-new">Será importada</td>
-                </tr>
-            `;
-        })
-        .join('');
-
-    const extraRows = pendingImport.items.length > 15
-        ? `
-            <tr>
-                <td colspan="4">
-                    … mais ${pendingImport.items.length - 15}
-                    unidades serão incluídas após a confirmação.
-                </td>
-            </tr>
-        `
-        : '';
-
-    $('#import-preview-body').innerHTML =
-        tableRows + extraRows;
+    const rows = pendingImport.rows;
 
     $('#import-preview-count').textContent =
-        `${pendingImport.items.length} novas unidades`;
+        `${rows.length} atividades novas`;
 
     $('#import-summary').innerHTML = `
-        Encontradas <strong>${pendingImport.totalValid}</strong> unidades válidas.
-        <strong>${pendingImport.items.length}</strong> serão adicionadas;
-        <strong>${pendingImport.alreadyImported}</strong> já existem e serão ignoradas;
-        <strong>${pendingImport.duplicatesInFile}</strong> duplicatas no arquivo foram ignoradas;
-        <strong>${pendingImport.invalidRows}</strong> linhas inválidas foram ignoradas.
+        Arquivo: <strong>${esc(pendingImport.fileName)}</strong><br>
+        Linhas lidas: <strong>${pendingImport.totalRows}</strong> ·
+        Novas atividades: <strong>${rows.length}</strong> ·
+        Duplicatas ignoradas: <strong>${pendingImport.duplicates}</strong> ·
+        Linhas ignoradas: <strong>${pendingImport.ignored}</strong>.
         <br>
-        Campos guardados: <strong>nome da unidade e município</strong>,
-        além de uma chave técnica de deduplicação. As demais colunas não são armazenadas.
+        Todos os campos não vazios são mantidos localmente para permitir busca
+        e visualização completa. O arquivo não é enviado a servidor algum.
     `;
 
-    $('#confirm-import').disabled =
-        pendingImport.items.length === 0;
+    $('#import-preview-body').innerHTML = rows
+        .slice(0, 12)
+        .map(activity => `
+            <tr>
+                <td>${esc(activity.identifier)}</td>
+                <td>${esc(activity.title)}</td>
+                <td>${esc(activity.city || '—')}</td>
+                <td><span class="status-badge status-pending">Pendente</span></td>
+            </tr>
+        `)
+        .join('');
+
+    if (rows.length > 12) {
+        $('#import-preview-body').insertAdjacentHTML(
+            'beforeend',
+            `<tr><td colspan="4">Mais ${rows.length - 12} atividades serão importadas após a confirmação.</td></tr>`
+        );
+    }
+
+    $('#confirm-import').disabled = rows.length === 0;
 }
 
 function confirmImport() {
-    if (!pendingImport || !pendingImport.items.length) {
-        toast('Não há novas unidades para importar.', true);
+    if (
+        !pendingImport ||
+        pendingImport.projectId !== currentProjectId
+    ) {
+        toast('Volte ao projeto correto e analise a planilha novamente.', true);
         return;
     }
 
-    const items = pendingImport.items;
+    const projectName = getProject()?.name || currentProjectId;
+    const rows = pendingImport.rows;
+    const projectActivities = getActivities();
+    const oldLength = projectActivities.length;
 
-    let added = 0;
-
-    const skipped =
-        pendingImport.alreadyImported +
-        pendingImport.duplicatesInFile;
-
-    for (const item of items) {
-        if (state.units.some(
-            unit => unit.sourceKey &&
-                unit.sourceKey === item.sourceKey
-        )) {
-            continue;
-        }
-
-        const code =
-            `IMP-${String(state.nextUnitId).padStart(4, '0')}`;
-
-        state.units.push({
-            id: state.nextUnitId++,
-            code,
-            name: item.name,
-            city: item.city,
-            sourceKey: item.sourceKey,
-            imported: true
-        });
-
-        added++;
-    }
-
-    if (added === 0) {
-        toast(
-            'Todas as unidades da planilha já foram importadas.',
-            true
-        );
-        return;
-    }
+    projectActivities.push(...rows);
 
     logAction(
         'Planilha importada',
-        `${added} unidades adicionadas; ${skipped} duplicatas ignoradas; ${pendingImport.invalidRows} linhas inválidas ignoradas. Campos de infraestrutura foram descartados.`
+        `${pendingImport.fileName}: ${rows.length} atividades adicionadas ao projeto ${projectName}; ${pendingImport.duplicates} duplicatas ignoradas e ${pendingImport.ignored} linhas ignoradas.`
     );
 
-    if (!saveState()) return;
+    if (!saveState()) {
+        projectActivities.splice(oldLength);
+        return;
+    }
+
+    const inserted = rows.length;
 
     pendingImport = null;
 
     $('#import-form').reset();
+    renderImportView();
 
-    $('#import-preview').classList.add('preview-hidden');
-    $('#import-preview-body').innerHTML = '';
-    $('#import-summary').textContent = '';
-    $('#confirm-import').disabled = true;
+    renderAllCurrentProject();
+    setView('dashboard');
 
-    renderAll();
-    setView('units');
-
-    toast(
-        `${added} unidades importadas localmente. Nenhum arquivo foi enviado ao servidor.`
-    );
+    toast(`${inserted} atividades importadas em ${projectName}.`);
 }
 
-/* HISTÓRICO DE AÇÕES */
+function cancelImport() {
+    pendingImport = null;
+
+    $('#import-form').reset();
+    renderImportView();
+
+    toast('Importação cancelada. Nenhuma atividade foi adicionada.');
+}
+
+/* HISTÓRICO */
 
 function renderHistory() {
-    const search = ($('#history-search')?.value || '')
-        .trim()
-        .toLocaleLowerCase('pt-BR');
-
+    const query = normalizeText($('#history-search')?.value || '');
     const select = $('#history-action-filter');
     const previous = select.value;
 
+    const relevantLog = state.auditLog.filter(entry =>
+        !entry.projectId || entry.projectId === currentProjectId
+    );
+
     const actions = [...new Set(
-        state.auditLog.map(entry => entry.action)
+        relevantLog.map(entry => entry.action)
     )].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
     select.innerHTML =
@@ -1844,64 +1010,39 @@ function renderHistory() {
 
     const actionFilter = select.value;
 
-    const filtered = [...state.auditLog]
+    const filtered = [...relevantLog]
         .sort((a, b) => new Date(b.at) - new Date(a.at))
         .filter(entry => {
-            const matchesAction =
-                !actionFilter || entry.action === actionFilter;
+            if (actionFilter && entry.action !== actionFilter) {
+                return false;
+            }
 
-            const text =
+            const searchable = normalizeText(
                 `${entry.action} ${entry.user} ${entry.detail}`
-                    .toLocaleLowerCase('pt-BR');
+            );
 
-            return matchesAction &&
-                (!search || text.includes(search));
+            return !query || searchable.includes(query);
         });
 
     $('#history-count').textContent =
-        `${filtered.length} ${
-            filtered.length === 1 ? 'registro' : 'registros'
-        }`;
+        `${filtered.length} registros`;
 
     $('#history-body').innerHTML = filtered.map(entry => `
         <tr>
-            <td title="${esc(entry.at)}">
-                ${esc(isoTime(entry.at))}
-            </td>
-
-            <td class="history-action">
-                ${esc(entry.action)}
-            </td>
-
-            <td>
-                ${esc(entry.user || DEMO_USER)}
-            </td>
-
-            <td class="history-detail">
-                ${esc(entry.detail)}
-            </td>
+            <td>${esc(isoTime(entry.at))}</td>
+            <td class="history-action">${esc(entry.action)}</td>
+            <td>${esc(entry.user || DEMO_USER)}</td>
+            <td>${esc(entry.detail)}</td>
         </tr>
     `).join('');
 
-    const empty = $('#history-empty');
-
-    empty.classList.toggle(
-        'preview-hidden',
-        filtered.length > 0
-    );
-
-    $('#history-body').parentElement.classList.toggle(
-        'preview-hidden',
-        filtered.length === 0
-    );
-
-    $('#nav-history-count').textContent =
-        state.auditLog.length;
+    $('#history-empty').hidden = filtered.length > 0;
 }
 
 function exportHistoryCSV() {
-    const entries = [...state.auditLog]
-        .sort((a, b) => new Date(b.at) - new Date(a.at));
+    const entries = state.auditLog.filter(entry =>
+        !entry.projectId || entry.projectId === currentProjectId
+    );
 
     const rows = [
         ['Data', 'Ação', 'Usuário', 'Detalhe'],
@@ -1928,7 +1069,7 @@ function exportHistoryCSV() {
     const link = document.createElement('a');
 
     link.href = url;
-    link.download = 'oviv-historico-demonstracao.csv';
+    link.download = `oviv-historico-${currentProjectId}.csv`;
 
     document.body.appendChild(link);
     link.click();
@@ -1938,25 +1079,41 @@ function exportHistoryCSV() {
 
     logAction(
         'Histórico exportado',
-        `${entries.length} registros exportados para CSV neste dispositivo.`
+        `${entries.length} registros exportados para CSV.`
     );
 
     saveState();
     renderHistory();
 
-    toast('Histórico exportado como CSV neste dispositivo.');
+    toast('Histórico exportado para CSV.');
+}
+
+function resetDemo() {
+    if (!confirm(
+        'Restaurar todos os dados de exemplo? Isso remove os projetos importados, adoções e histórico salvos neste navegador.'
+    )) {
+        return;
+    }
+
+    state = seedData();
+    currentProjectId = null;
+    pendingImport = null;
+
+    if (!saveState()) return;
+
+    renderProjectCards();
+    setView('projects');
+
+    toast('Dados demonstrativos restaurados.');
+}
+
+function renderAllCurrentProject() {
+    renderProjectCards();
+    renderDashboard();
+    renderHistory();
 }
 
 /* EVENTOS DA INTERFACE */
-
-function renderAll() {
-    renderSummary();
-    renderDashboard();
-    renderAnalysts();
-    renderUnits();
-    renderVisitOptions();
-    renderHistory();
-}
 
 document.addEventListener('click', event => {
     const nav = event.target.closest('[data-nav]');
@@ -1967,52 +1124,76 @@ document.addEventListener('click', event => {
         return;
     }
 
+    const importLink = event.target.closest('[data-open-import]');
+
+    if (importLink) {
+        setView('import');
+        return;
+    }
+
     const action = event.target.closest('[data-action]');
 
-    if (!action) return;
+    if (action) {
+        switch (action.dataset.action) {
+            case 'open-project':
+                selectProject(action.dataset.projectId);
+                return;
 
-    switch (action.dataset.action) {
-        case 'add-activity':
-            openActivity(action.dataset.visitId);
-            break;
+            case 'adopt-activity':
+                event.preventDefault();
+                event.stopPropagation();
+                adoptActivity(action.dataset.activityId);
+                return;
 
-        case 'save-status':
-            saveActivityStatus(action);
-            break;
-
-        case 'close-visit':
-            closeVisit(action);
-            break;
-
-        case 'toggle-analyst':
-            toggleAnalyst(action);
-            break;
-
-        case 'delete-unit':
-            deleteUnit(action);
-            break;
+            case 'view-activity':
+                renderActivityDetails(action.dataset.activityId);
+                return;
+        }
     }
 });
 
-$('#analyst-form').addEventListener(
-    'submit',
-    createAnalyst
+document.addEventListener('keydown', event => {
+    const row = event.target.closest(
+        'tr[data-action="view-activity"]'
+    );
+
+    if (!row) return;
+
+    if (event.key === 'Enter' || event.key === ' ') {
+        if (event.target.closest('button')) return;
+
+        event.preventDefault();
+        renderActivityDetails(row.dataset.activityId);
+    }
+});
+
+$('#open-import').addEventListener(
+    'click',
+    () => setView('import')
 );
 
-$('#unit-form').addEventListener(
-    'submit',
-    createUnit
+$('#activity-search').addEventListener(
+    'input',
+    renderActivityRows
 );
 
-$('#visit-form').addEventListener(
-    'submit',
-    createVisit
+$('#status-filter').addEventListener(
+    'change',
+    renderActivityRows
 );
 
-$('#activity-form').addEventListener(
-    'submit',
-    createActivity
+$('#adoption-filter').addEventListener(
+    'change',
+    renderActivityRows
 );
+
+$('#clear-search').addEventListener('click', () => {
+    $('#activity-search').value = '';
+    $('#status-filter').value = '';
+    $('#adoption-filter').value = '';
+
+    renderActivityRows();
+});
 
 $('#import-form').addEventListener(
     'submit',
@@ -2024,19 +1205,10 @@ $('#confirm-import').addEventListener(
     confirmImport
 );
 
-$('#cancel-import').addEventListener('click', () => {
-    pendingImport = null;
-
-    $('#import-preview').classList.add('preview-hidden');
-    $('#import-preview-body').innerHTML = '';
-    $('#import-summary').textContent = '';
-    $('#confirm-import').disabled = true;
-    $('#import-file').value = '';
-
-    toast(
-        'Importação cancelada. Nenhuma unidade foi adicionada.'
-    );
-});
+$('#cancel-import').addEventListener(
+    'click',
+    cancelImport
+);
 
 $('#history-search').addEventListener(
     'input',
@@ -2053,27 +1225,34 @@ $('#export-history').addEventListener(
     exportHistoryCSV
 );
 
-$('#close-activity-dialog').addEventListener('click', () => {
-    $('#activity-dialog').close();
-});
-
-$('#cancel-activity').addEventListener('click', () => {
-    $('#activity-dialog').close();
-});
-
 $('#reset-demo').addEventListener(
     'click',
     resetDemo
 );
 
-$('#refresh-dashboard').addEventListener('click', () => {
-    renderAll();
-    toast('Painel atualizado com os dados locais.');
+$('#close-detail').addEventListener('click', () => {
+    $('#activity-detail-dialog').close();
+});
+
+$('#activity-detail-dialog').addEventListener('click', event => {
+    if (event.target === $('#activity-detail-dialog')) {
+        $('#activity-detail-dialog').close();
+    }
 });
 
 window.addEventListener('hashchange', () => {
-    setView(location.hash.slice(1) || 'dashboard');
+    const requested = location.hash.slice(1);
+
+    if (requested === 'projects') {
+        setView('projects');
+    } else if (
+        ['dashboard', 'import', 'history'].includes(requested) &&
+        currentProjectId
+    ) {
+        setView(requested);
+    }
 });
 
-renderAll();
-setView(location.hash.slice(1) || 'dashboard');
+// Inicialização: a primeira tela sempre é a seleção do projeto.
+renderProjectCards();
+setView('projects');

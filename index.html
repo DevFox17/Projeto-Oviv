@@ -1,729 +1,365 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#176b4b">
-
-    <title>Oviv | Gestão Operacional</title>
-
-    <link rel="stylesheet" href="./public/style.css">
-
-    <script
-        src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
-        defer>
-    </script>
-
-    <script src="./public/dashboard.js" defer></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#176b4b">
+  <title>Oviv | Gestão de Atividades</title>
+  <link rel="stylesheet" href="./public/style.css">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
+  <script src="./public/dashboard.js" defer></script>
 </head>
-
 <body>
-    <header class="topbar">
-        <a
-            href="#dashboard"
-            class="brand"
-            data-nav="dashboard"
-            aria-label="Oviv - início">
+  <header class="topbar">
+    <a class="brand" href="#projects" data-nav="projects" aria-label="Voltar aos projetos">
+      <span class="brand-mark">O</span>
+      <span class="brand-copy">
+        <strong>oviv</strong>
+        <small>GESTÃO DE ATIVIDADES</small>
+      </span>
+    </a>
 
-            <span class="brand-icon">O</span>
+    <div class="topbar-right">
+      <span class="demo-badge">DEMONSTRAÇÃO</span>
+      <span id="current-project-label" class="current-project-label" hidden></span>
+      <button id="reset-demo" class="button button-quiet" type="button">
+        Restaurar exemplos
+      </button>
+    </div>
+  </header>
 
-            <span>
-                <strong>oviv</strong>
-                <small>GESTÃO OPERACIONAL</small>
-            </span>
-        </a>
+  <div class="demo-notice">
+    <strong>Ambiente demonstrativo.</strong>
+    Os dados são salvos apenas neste navegador. Não há login real,
+    sincronização entre usuários ou conexão com o banco de produção.
+  </div>
 
-        <div class="top-actions">
-            <span class="demo-pill">● MODO DEMONSTRAÇÃO</span>
+  <main class="app-shell">
 
-            <button
-                id="reset-demo"
-                class="button quiet"
-                type="button">
+    <!-- Seleção de projeto -->
+    <section id="view-projects" class="view project-selection" aria-labelledby="projects-title">
+      <div class="page-heading">
+        <p class="eyebrow">ESPAÇO DE TRABALHO</p>
+        <h1 id="projects-title">Em qual projeto vamos trabalhar?</h1>
+        <p class="subtitle">
+          Selecione um projeto para consultar e adotar atividades de configuração lógica.
+        </p>
+      </div>
 
-                Restaurar dados de exemplo
+      <div id="project-cards" class="project-grid"></div>
+
+      <p class="privacy-note">
+        Cada projeto tem sua própria lista de atividades nesta demonstração.
+        Os arquivos importados são lidos no navegador e não são enviados ao servidor.
+      </p>
+    </section>
+
+    <!-- Navegação dentro do projeto -->
+    <div id="project-workspace" class="workspace" hidden>
+      <nav class="project-nav" aria-label="Navegação do projeto">
+        <button class="nav-button" type="button" data-nav="projects">← Projetos</button>
+        <button class="nav-button active" type="button" data-nav="dashboard">Atividades</button>
+        <button class="nav-button" type="button" data-nav="history">Histórico</button>
+      </nav>
+
+      <!-- Dashboard do projeto -->
+      <section id="view-dashboard" class="view" aria-labelledby="dashboard-title" hidden>
+        <div class="page-heading page-heading-row">
+          <div>
+            <p id="project-eyebrow" class="eyebrow">PROJETO</p>
+            <h1 id="dashboard-title">Atividades do projeto</h1>
+            <p class="subtitle">
+              Pesquise em qualquer campo importado. Abrir uma linha apenas visualiza
+              a atividade; para adotá-la, use o botão específico.
+            </p>
+          </div>
+
+          <div class="heading-actions">
+            <button id="open-import" class="button button-primary" type="button">
+              ＋ Importar planilha
             </button>
+          </div>
         </div>
-    </header>
 
-    <div class="demo-notice">
-        <strong>Ambiente de demonstração:</strong>
-        os registros são fictícios e ficam salvos somente neste navegador.
-        Não há sincronização entre usuários nem conexão com o banco de produção.
-    </div>
+        <div class="stats-grid" aria-label="Totais das atividades">
+          <article class="stat-card">
+            <span class="stat-label">Total de atividades</span>
+            <strong id="kpi-total" class="stat-number">0</strong>
+            <span class="stat-help">Neste projeto</span>
+          </article>
 
-    <div class="layout">
-        <aside class="sidebar" aria-label="Navegação principal">
+          <article class="stat-card">
+            <span class="stat-label">Pendentes</span>
+            <strong id="kpi-pending" class="stat-number">0</strong>
+            <span class="stat-help">Aguardando análise ou configuração</span>
+          </article>
 
-            <p class="nav-caption">ESPAÇO DE TRABALHO</p>
+          <article class="stat-card">
+            <span class="stat-label">Adotadas</span>
+            <strong id="kpi-adopted" class="stat-number">0</strong>
+            <span class="stat-help">Assumidas por um usuário demonstrativo</span>
+          </article>
 
-            <button
-                class="nav-button active"
-                type="button"
-                data-nav="dashboard">
+          <article class="stat-card">
+            <span class="stat-label">Em configuração</span>
+            <strong id="kpi-configuring" class="stat-number">0</strong>
+            <span class="stat-help">Trabalho iniciado</span>
+          </article>
 
-                <span class="nav-symbol">▦</span>
-                Visão geral
-            </button>
+          <article class="stat-card">
+            <span class="stat-label">Concluídas</span>
+            <strong id="kpi-completed" class="stat-number">0</strong>
+            <span class="stat-help">Configuração finalizada</span>
+          </article>
 
-            <button
-                class="nav-button"
-                type="button"
-                data-nav="analysts">
+          <article class="stat-card">
+            <span class="stat-label">Com impedimento</span>
+            <strong id="kpi-blocked" class="stat-number">0</strong>
+            <span class="stat-help">Precisam de atenção</span>
+          </article>
+        </div>
 
-                <span class="nav-symbol">♙</span>
-                Analistas
-                <span id="nav-analyst-count" class="nav-count">0</span>
-            </button>
-
-            <button
-                class="nav-button"
-                type="button"
-                data-nav="units">
-
-                <span class="nav-symbol">⌖</span>
-                Unidades
-                <span id="nav-unit-count" class="nav-count">0</span>
-            </button>
-
-            <button
-                class="nav-button"
-                type="button"
-                data-nav="import">
-
-                <span class="nav-symbol">⇧</span>
-                Importar planilha
-            </button>
-
-            <button
-                class="nav-button"
-                type="button"
-                data-nav="history">
-
-                <span class="nav-symbol">☷</span>
-                Histórico
-                <span id="nav-history-count" class="nav-count">0</span>
-            </button>
-
-            <div class="nav-separator"></div>
-
-            <button
-                class="nav-button"
-                type="button"
-                data-nav="new-visit">
-
-                <span class="nav-symbol">＋</span>
-                Iniciar visita
-            </button>
-
-            <div class="sidebar-bottom">
-                <span class="status-dot"></span>
-
-                <div>
-                    <strong>Protótipo local</strong>
-                    <small>Dados deste navegador</small>
-                </div>
+        <section class="panel search-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Buscar atividade</h2>
+              <p>
+                O termo é comparado com todos os campos importados da linha,
+                inclusive IDs e endereço.
+              </p>
             </div>
-        </aside>
-
-        <main>
-            <!-- DASHBOARD -->
-            <section id="view-dashboard" class="view">
-
-                <div class="heading">
-                    <div>
-                        <p class="eyebrow">PAINEL GERENCIAL</p>
-
-                        <h1>Visão geral da operação</h1>
-
-                        <p class="subtitle">
-                            Acompanhe as visitas, os analistas e o andamento de cada serviço.
-                        </p>
-                    </div>
-
-                    <div class="heading-actions">
-                        <span class="updated">
-                            Atualizado
-                            <strong id="last-updated">—</strong>
-                        </span>
-
-                        <button
-                            id="refresh-dashboard"
-                            class="button secondary"
-                            type="button">
-
-                            ↻ Atualizar painel
-                        </button>
-                    </div>
-                </div>
-
-                <div class="stats">
-                    <article class="stat">
-                        <span class="stat-label">Atividades pendentes</span>
-                        <strong id="kpi-pending" class="stat-number">0</strong>
-                        <span class="stat-help">Aguardando execução</span>
-                    </article>
-
-                    <article class="stat">
-                        <span class="stat-label">Em andamento</span>
-                        <strong id="kpi-progress" class="stat-number">0</strong>
-                        <span class="stat-help">Deslocamento ou execução</span>
-                    </article>
-
-                    <article class="stat">
-                        <span class="stat-label">Com impedimento</span>
-                        <strong id="kpi-impediments" class="stat-number">0</strong>
-                        <span class="stat-help">Precisam de atenção</span>
-                    </article>
-
-                    <article class="stat">
-                        <span class="stat-label">Concluídas hoje</span>
-                        <strong id="kpi-completed" class="stat-number">0</strong>
-                        <span class="stat-help">Serviços finalizados no dia</span>
-                    </article>
-
-                    <article class="stat">
-                        <span class="stat-label">Visitas abertas</span>
-                        <strong id="kpi-visits" class="stat-number">0</strong>
-                        <span class="stat-help">Atendimentos não encerrados</span>
-                    </article>
-
-                    <article class="stat">
-                        <span class="stat-label">Analistas ativos</span>
-                        <strong id="kpi-analysts" class="stat-number">0</strong>
-                        <span class="stat-help">Com visita em andamento</span>
-                    </article>
-                </div>
-
-                <section class="panel">
-                    <div class="panel-head">
-                        <div>
-                            <h2>Acompanhamento em campo</h2>
-
-                            <p>
-                                Visitas abertas e atividades vinculadas a cada uma.
-                            </p>
-                        </div>
-
-                        <div class="panel-actions">
-                            <span id="visit-count" class="count">0 visitas</span>
-
-                            <button
-                                class="button primary"
-                                type="button"
-                                data-nav="new-visit">
-
-                                ＋ Nova visita
-                            </button>
-                        </div>
-                    </div>
-
-                    <div id="visits-container" class="visits">
-                        <div class="empty">Carregando visitas...</div>
-                    </div>
-                </section>
-            </section>
-
-            <!-- ANALISTAS -->
-            <section id="view-analysts" class="view" hidden>
-
-                <div class="heading">
-                    <div>
-                        <p class="eyebrow">EQUIPE</p>
-
-                        <h1>Analistas</h1>
-
-                        <p class="subtitle">
-                            Cadastre e gerencie os analistas usados na demonstração.
-                        </p>
-                    </div>
-                </div>
-
-                <div class="columns">
-                    <section class="panel">
-                        <div class="panel-head">
-                            <div>
-                                <h2>Novo analista</h2>
-                                <p>Use dados fictícios.</p>
-                            </div>
-                        </div>
-
-                        <form id="analyst-form" class="form-body">
-
-                            <label for="analyst-name">
-                                Nome completo
-                                <span class="required">*</span>
-                            </label>
-
-                            <input
-                                id="analyst-name"
-                                name="name"
-                                type="text"
-                                required
-                                maxlength="100"
-                                placeholder="Ex.: Alex Silva">
-
-                            <label for="analyst-email">
-                                E-mail demonstrativo
-                                <span class="required">*</span>
-                            </label>
-
-                            <input
-                                id="analyst-email"
-                                name="email"
-                                type="email"
-                                required
-                                maxlength="150"
-                                placeholder="alex@demo.invalid">
-
-                            <button class="button primary" type="submit">
-                                ＋ Cadastrar analista
-                            </button>
-
-                            <p class="form-note">
-                                Este cadastro é demonstrativo; não cria login nem senha de acesso.
-                            </p>
-                        </form>
-                    </section>
-
-                    <section class="panel">
-                        <div class="panel-head">
-                            <div>
-                                <h2>Equipe cadastrada</h2>
-                                <p>Analistas disponíveis para atribuição a visitas.</p>
-                            </div>
-
-                            <span id="analyst-count" class="count">
-                                0 analistas
-                            </span>
-                        </div>
-
-                        <div id="analysts-list" class="entity-list"></div>
-                    </section>
-                </div>
-            </section>
-
-            <!-- UNIDADES -->
-            <section id="view-units" class="view" hidden>
-
-                <div class="heading">
-                    <div>
-                        <p class="eyebrow">LOCAIS DE ATENDIMENTO</p>
-
-                        <h1>Unidades</h1>
-
-                        <p class="subtitle">
-                            Gerencie unidades fictícias para o check-in manual.
-                        </p>
-                    </div>
-                </div>
-
-                <div class="columns">
-                    <section class="panel">
-                        <div class="panel-head">
-                            <div>
-                                <h2>Nova unidade</h2>
-                                <p>Não informe detalhes reais da infraestrutura.</p>
-                            </div>
-                        </div>
-
-                        <form id="unit-form" class="form-body">
-
-                            <label for="unit-code">
-                                Código demonstrativo
-                                <span class="required">*</span>
-                            </label>
-
-                            <input
-                                id="unit-code"
-                                name="code"
-                                type="text"
-                                required
-                                maxlength="30"
-                                placeholder="DEMO-004">
-
-                            <label for="unit-name">
-                                Nome da unidade
-                                <span class="required">*</span>
-                            </label>
-
-                            <input
-                                id="unit-name"
-                                name="name"
-                                type="text"
-                                required
-                                maxlength="100"
-                                placeholder="Unidade de demonstração 04">
-
-                            <label for="unit-city">Cidade / região</label>
-
-                            <input
-                                id="unit-city"
-                                name="city"
-                                type="text"
-                                maxlength="80"
-                                placeholder="Cidade exemplo - MG">
-
-                            <button class="button primary" type="submit">
-                                ＋ Cadastrar unidade
-                            </button>
-
-                            <p class="form-note">
-                                Os dados são locais e fictícios.
-                            </p>
-                        </form>
-                    </section>
-
-                    <section class="panel">
-                        <div class="panel-head">
-                            <div>
-                                <h2>Unidades cadastradas</h2>
-                                <p>Locais disponíveis para selecionar no check-in.</p>
-                            </div>
-
-                            <span id="unit-count" class="count">0 unidades</span>
-                        </div>
-
-                        <div id="units-list" class="entity-list"></div>
-                    </section>
-                </div>
-            </section>
-
-            <!-- CHECK-IN -->
-            <section id="view-new-visit" class="view" hidden>
-
-                <div class="heading">
-                    <div>
-                        <p class="eyebrow">CHECK-IN MANUAL</p>
-
-                        <h1>Iniciar uma visita</h1>
-
-                        <p class="subtitle">
-                            Selecione um analista e uma unidade. Não utilizamos GPS.
-                        </p>
-                    </div>
-                </div>
-
-                <div class="columns">
-                    <section class="panel">
-                        <div class="panel-head">
-                            <div>
-                                <h2>Dados da visita</h2>
-                                <p>Uma visita pode conter várias atividades.</p>
-                            </div>
-                        </div>
-
-                        <form id="visit-form" class="form-body">
-
-                            <label for="visit-analyst">
-                                Analista responsável
-                                <span class="required">*</span>
-                            </label>
-
-                            <select id="visit-analyst" required>
-                                <option value="">Selecione um analista</option>
-                            </select>
-
-                            <label for="visit-unit">
-                                Unidade de atendimento
-                                <span class="required">*</span>
-                            </label>
-
-                            <select id="visit-unit" required>
-                                <option value="">Selecione uma unidade</option>
-                            </select>
-
-                            <p id="visit-form-hint" class="notice-inline">
-                                O check-in é manual.
-                            </p>
-
-                            <button class="button primary" type="submit">
-                                Registrar check-in
-                            </button>
-                        </form>
-                    </section>
-
-                    <aside class="form-side-note">
-                        <span>ⓘ</span>
-
-                        <h2>Como funciona?</h2>
-
-                        <p>
-                            O check-in abre uma visita vinculada ao analista e à unidade escolhida.
-                        </p>
-
-                        <p>
-                            Depois, você pode adicionar várias atividades e atualizar cada status individualmente.
-                        </p>
-
-                        <p>
-                            Um analista só pode ter uma visita aberta por vez neste protótipo.
-                        </p>
-
-                        <button
-                            class="button secondary"
-                            type="button"
-                            data-nav="dashboard">
-
-                            Voltar ao painel
-                        </button>
-                    </aside>
-                </div>
-            </section>
-
-            <!-- IMPORTAÇÃO -->
-            <section id="view-import" class="view" hidden>
-
-                <div class="heading">
-                    <div>
-                        <p class="eyebrow">IMPORTAÇÃO LOCAL</p>
-
-                        <h1>Importar planilha</h1>
-
-                        <p class="subtitle">
-                            Carregue um Excel ou CSV para acrescentar unidades à demonstração.
-                        </p>
-                    </div>
-                </div>
-
-                <section class="panel">
-                    <div class="panel-head">
-                        <div>
-                            <h2>Selecionar arquivo</h2>
-                            <p>Confira os registros antes de importá-los.</p>
-                        </div>
-
-                        <span class="file-tag">XLSX · XLS · CSV</span>
-                    </div>
-
-                    <form id="import-form" class="upload-box">
-
-                        <label for="import-file">
-                            Arquivo da planilha
-                        </label>
-
-                        <input
-                            id="import-file"
-                            name="file"
-                            type="file"
-                            accept=".xlsx,.xls,.csv"
-                            required>
-
-                        <div class="privacy-note">
-                            <strong>Privacidade:</strong>
-                            o arquivo é lido neste navegador e não é enviado para um servidor.
-                            Serão guardados somente o nome da unidade, o município e uma chave
-                            técnica de deduplicação. Endereço, NETWORK, HOSTNAME, IPs,
-                            coordenadas, equipamentos e demais campos serão ignorados.
-                        </div>
-
-                        <div class="warning-note">
-                            Use somente arquivos que você tem autorização para analisar.
-                            Os nomes das unidades e municípios importados ficarão no armazenamento
-                            local deste navegador.
-                        </div>
-
-                        <div>
-                            <button class="button primary" type="submit">
-                                Analisar arquivo
-                            </button>
-                        </div>
-                    </form>
-                </section>
-
-                <section
-                    id="import-preview"
-                    class="panel preview-area preview-hidden">
-
-                    <div class="panel-head">
-                        <div>
-                            <h2>Prévia da importação</h2>
-                            <p>Confira os campos permitidos antes de confirmar.</p>
-                        </div>
-
-                        <span id="import-preview-count" class="count">
-                            0 unidades
-                        </span>
-                    </div>
-
-                    <div id="import-summary" class="upload-box preview-summary"></div>
-
-                    <div class="table-wrap">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>CÓDIGO DE DEMONSTRAÇÃO</th>
-                                    <th>UNIDADE</th>
-                                    <th>MUNICÍPIO</th>
-                                    <th>SITUAÇÃO</th>
-                                </tr>
-                            </thead>
-
-                            <tbody id="import-preview-body"></tbody>
-                        </table>
-                    </div>
-
-                    <div class="preview-actions">
-                        <button id="cancel-import" class="button secondary" type="button">
-                            Cancelar
-                        </button>
-
-                        <button
-                            id="confirm-import"
-                            class="button primary"
-                            type="button"
-                            disabled>
-
-                            Confirmar importação
-                        </button>
-                    </div>
-                </section>
-            </section>
-
-            <!-- HISTÓRICO -->
-            <section id="view-history" class="view" hidden>
-
-                <div class="heading">
-                    <div>
-                        <p class="eyebrow">RASTREABILIDADE</p>
-
-                        <h1>Histórico de ações</h1>
-
-                        <p class="subtitle">
-                            Registro local das ações executadas durante esta demonstração.
-                        </p>
-                    </div>
-
-                    <div class="heading-actions">
-                        <button
-                            id="export-history"
-                            class="button secondary"
-                            type="button">
-
-                            Exportar CSV
-                        </button>
-                    </div>
-                </div>
-
-                <div class="warning-note history-warning">
-                    Este histórico é demonstrativo, fica neste navegador e pode ser alterado
-                    por quem tem acesso ao dispositivo. Ainda não é uma trilha de auditoria
-                    segura para produção.
-                </div>
-
-                <section class="panel">
-                    <div class="history-toolbar">
-                        <input
-                            id="history-search"
-                            type="search"
-                            placeholder="Buscar ação, usuário ou detalhe"
-                            aria-label="Buscar no histórico">
-
-                        <select
-                            id="history-action-filter"
-                            aria-label="Filtrar por ação">
-
-                            <option value="">Todas as ações</option>
-                        </select>
-
-                        <span id="history-count" class="count">
-                            0 registros
-                        </span>
-                    </div>
-
-                    <div class="table-wrap">
-                        <table class="history-table">
-                            <thead>
-                                <tr>
-                                    <th>DATA</th>
-                                    <th>AÇÃO</th>
-                                    <th>USUÁRIO</th>
-                                    <th>DETALHE</th>
-                                </tr>
-                            </thead>
-
-                            <tbody id="history-body"></tbody>
-                        </table>
-                    </div>
-
-                    <div id="history-empty" class="empty preview-hidden">
-                        <strong>Nenhuma ação encontrada</strong>
-                        <p>As operações realizadas aparecerão aqui.</p>
-                    </div>
-                </section>
-            </section>
-
-            <footer class="footer">
-                Oviv · Protótipo demonstrativo · Não utilizar para operação real
-            </footer>
-        </main>
-    </div>
-
-    <!-- MODAL DE ATIVIDADE -->
-    <dialog id="activity-dialog" class="modal">
-        <form id="activity-form" class="modal-body">
-
-            <div class="modal-top">
-                <div>
-                    <p class="eyebrow">VISITA EM CAMPO</p>
-
-                    <h2>Adicionar atividade</h2>
-
-                    <p id="activity-visit-label">
-                        Vincule um serviço a esta visita.
-                    </p>
-                </div>
-
-                <button
-                    id="close-activity-dialog"
-                    class="button quiet small"
-                    type="button"
-                    aria-label="Fechar">
-
-                    ✕
-                </button>
+          </div>
+
+          <div class="search-controls">
+            <label class="sr-only" for="activity-search">Buscar em todos os campos</label>
+            <input
+              id="activity-search"
+              type="search"
+              autocomplete="off"
+              placeholder="Ex.: ID link, ID VGR, endereço, hostname, município…">
+
+            <label class="sr-only" for="status-filter">Filtrar por status</label>
+            <select id="status-filter">
+              <option value="">Todos os status</option>
+              <option value="PENDENTE">Pendente</option>
+              <option value="EM_CONFIGURACAO">Em configuração</option>
+              <option value="CONCLUIDA">Concluída</option>
+              <option value="IMPEDIMENTO">Impedimento</option>
+              <option value="CANCELADA">Cancelada</option>
+            </select>
+
+            <label class="sr-only" for="adoption-filter">Filtrar por adoção</label>
+            <select id="adoption-filter">
+              <option value="">Adotadas e não adotadas</option>
+              <option value="adopted">Somente adotadas</option>
+              <option value="available">Somente não adotadas</option>
+            </select>
+
+            <button id="clear-search" class="button button-secondary" type="button">
+              Limpar
+            </button>
+          </div>
+
+          <div class="table-summary">
+            <span id="results-count">0 resultados</span>
+            <span class="small-muted">
+              Clique na linha para visualizar. A adoção exige clicar em “Adotar atividade”.
+            </span>
+          </div>
+
+          <div class="table-scroll">
+            <table class="activity-table">
+              <thead>
+                <tr>
+                  <th>IDENTIFICADOR</th>
+                  <th>ATIVIDADE / UNIDADE</th>
+                  <th>MUNICÍPIO</th>
+                  <th>STATUS</th>
+                  <th>ADOÇÃO</th>
+                  <th>AÇÃO</th>
+                </tr>
+              </thead>
+              <tbody id="activities-table-body"></tbody>
+            </table>
+          </div>
+
+          <div id="activities-empty" class="empty-state" hidden>
+            <strong>Nenhuma atividade encontrada</strong>
+            <p>Importe uma planilha para este projeto ou altere os filtros da busca.</p>
+            <button class="button button-primary" type="button" data-open-import>
+              Importar planilha
+            </button>
+          </div>
+        </section>
+      </section>
+
+      <!-- Importação do projeto atual -->
+      <section id="view-import" class="view" hidden>
+        <div class="page-heading">
+          <p class="eyebrow">IMPORTAÇÃO LOCAL</p>
+          <h1>Importar atividades</h1>
+          <p class="subtitle">
+            O arquivo é processado neste navegador. Confira a prévia antes de confirmar.
+          </p>
+        </div>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Selecionar arquivo</h2>
+              <p>Compatível com Excel e CSV.</p>
             </div>
+            <span class="file-tag">XLSX · XLS · CSV</span>
+          </div>
 
-            <input id="activity-visit-id" type="hidden">
-
-            <label for="activity-title">
-                Título da atividade
-                <span class="required">*</span>
+          <form id="import-form" class="form-body">
+            <label for="import-file">
+              Arquivo do projeto <span class="required">*</span>
             </label>
 
             <input
-                id="activity-title"
-                required
-                maxlength="140"
-                placeholder="Ex.: Verificar conectividade">
+              id="import-file"
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              required>
 
-            <label for="activity-description">
-                Descrição (opcional)
-            </label>
-
-            <textarea
-                id="activity-description"
-                rows="3"
-                maxlength="500"
-                placeholder="Descreva brevemente o serviço">
-            </textarea>
-
-            <div class="modal-actions">
-                <button
-                    id="cancel-activity"
-                    class="button secondary"
-                    type="button">
-
-                    Cancelar
-                </button>
-
-                <button class="button primary" type="submit">
-                    Criar atividade
-                </button>
+            <div class="privacy-note">
+              <strong>Privacidade:</strong>
+              para permitir a busca em todos os campos, os valores das linhas importadas
+              ficam armazenados no localStorage deste navegador. O arquivo não é enviado
+              ao servidor nem incluído no GitHub, mas outras pessoas com acesso ao mesmo
+              perfil do navegador podem consultar os dados. Importe somente arquivos autorizados.
             </div>
-        </form>
-    </dialog>
 
-    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+            <div class="warning-note">
+              As colunas da planilha serão usadas para busca e visualização de detalhes.
+              A interface não publica automaticamente esses dados, mas você deve evitar
+              importar informações que não tem autorização para armazenar localmente.
+            </div>
+
+            <div class="form-actions">
+              <button class="button button-primary" type="submit">Analisar arquivo</button>
+              <button class="button button-secondary" type="button" data-nav="dashboard">
+                Voltar ao projeto
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section id="import-preview" class="panel preview-panel" hidden>
+          <div class="panel-heading">
+            <div>
+              <h2>Prévia da importação</h2>
+              <p>Confira antes de adicionar as atividades ao projeto.</p>
+            </div>
+            <span id="import-preview-count" class="count-label">0 atividades</span>
+          </div>
+
+          <div id="import-summary" class="preview-summary"></div>
+
+          <div class="table-scroll">
+            <table class="activity-table preview-table">
+              <thead>
+                <tr>
+                  <th>IDENTIFICADOR</th>
+                  <th>ATIVIDADE / UNIDADE</th>
+                  <th>MUNICÍPIO</th>
+                  <th>SITUAÇÃO</th>
+                </tr>
+              </thead>
+              <tbody id="import-preview-body"></tbody>
+            </table>
+          </div>
+
+          <div class="form-actions preview-actions">
+            <button id="cancel-import" class="button button-secondary" type="button">
+              Cancelar
+            </button>
+            <button id="confirm-import" class="button button-primary" type="button" disabled>
+              Confirmar importação
+            </button>
+          </div>
+        </section>
+      </section>
+
+      <!-- Histórico -->
+      <section id="view-history" class="view" hidden>
+        <div class="page-heading page-heading-row">
+          <div>
+            <p class="eyebrow">RASTREABILIDADE</p>
+            <h1>Histórico de ações</h1>
+            <p class="subtitle">
+              Registro local das ações realizadas neste projeto.
+            </p>
+          </div>
+
+          <button id="export-history" class="button button-secondary" type="button">
+            Exportar CSV
+          </button>
+        </div>
+
+        <div class="warning-note history-warning">
+          Histórico demonstrativo: fica neste navegador e pode ser alterado por quem
+          tem acesso ao dispositivo. Não substitui uma auditoria segura em produção.
+        </div>
+
+        <section class="panel">
+          <div class="search-controls history-controls">
+            <label class="sr-only" for="history-search">Buscar no histórico</label>
+            <input id="history-search" type="search" placeholder="Buscar ação, usuário ou detalhe">
+
+            <label class="sr-only" for="history-action-filter">Filtrar por ação</label>
+            <select id="history-action-filter">
+              <option value="">Todas as ações</option>
+            </select>
+
+            <span id="history-count" class="count-label">0 registros</span>
+          </div>
+
+          <div class="table-scroll">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>DATA</th>
+                  <th>AÇÃO</th>
+                  <th>USUÁRIO</th>
+                  <th>DETALHE</th>
+                </tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+
+          <div id="history-empty" class="empty-state" hidden>
+            <strong>Nenhuma ação encontrada</strong>
+            <p>As operações realizadas neste projeto aparecerão aqui.</p>
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <!-- Visualização da atividade: somente leitura, sem adoção automática -->
+  <dialog id="activity-detail-dialog" class="detail-dialog">
+    <div class="dialog-heading">
+      <div>
+        <p class="eyebrow">VISUALIZAÇÃO</p>
+        <h2 id="detail-title">Detalhes da atividade</h2>
+        <p id="detail-subtitle" class="subtitle"></p>
+      </div>
+      <button id="close-detail" class="button button-secondary" type="button">
+        Fechar
+      </button>
+    </div>
+
+    <div id="activity-detail-fields" class="detail-fields"></div>
+
+    <div class="detail-footer">
+      Esta tela é somente para visualização. Para assumir a atividade,
+      feche os detalhes e use “Adotar atividade” na linha correspondente.
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
