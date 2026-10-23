@@ -15,14 +15,14 @@ const PROJECTS = [
     },
     {
         id: 'cemig',
-        name: 'Projeto CEMIG',
+        name: 'Compania de energia',
         shortName: 'CEMIG',
         description: 'Atividades e configurações lógicas do projeto CEMIG.',
         icon: 'E'
     },
     {
         id: 'banco-brasil',
-        name: 'Projeto Banco do Brasil',
+        name: 'Teste BC',
         shortName: 'BANCO DO BRASIL',
         description: 'Atividades e configurações lógicas do projeto Banco do Brasil.',
         icon: 'B'
