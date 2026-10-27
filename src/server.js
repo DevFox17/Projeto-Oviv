@@ -11,46 +11,107 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
 
-app.use(express.static(path.join(__dirname, '../public')));
+// ============================================================
+// MIDDLEWARES E ARQUIVOS ESTÁTICOS
+// ============================================================
+
+app.use(express.json({
+    limit: '25mb'
+}));
+
+app.use(express.static(
+    path.join(__dirname, '../public')
+));
 
 app.use(
     '/public',
     express.static(path.join(__dirname, '../public'))
 );
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../index.html'));
+app.get('/', (_req, res) => {
+    res.sendFile(
+        path.join(__dirname, '../index.html')
+    );
 });
 
-// Verifica a conexão com o PostgreSQL
-app.get('/api/db-health', async (req, res) => {
+
+// ============================================================
+// NOVA API: AUTENTICAÇÃO E SESSÕES
+// POST /api/auth/login
+// GET  /api/auth/me
+// POST /api/auth/logout
+// GET  /api/auth/analysts
+// POST /api/auth/analysts
+// ============================================================
+
+app.use(
+    '/api/auth',
+    attachUser,
+    authRoutes
+);
+
+
+// ============================================================
+// NOVA API: PROJETOS E ATIVIDADES DE CONFIGURAÇÃO LÓGICA
+//
+// GET   /api/oviv/projects
+// GET   /api/oviv/projects/:projectId/activities
+// POST  /api/oviv/projects/:projectId/import
+// PATCH /api/oviv/projects/:projectId/activities/:activityId/assign
+// POST  /api/oviv/projects/:projectId/activities/:activityId/adopt
+// PATCH /api/oviv/projects/:projectId/activities/:activityId/status
+// GET   /api/oviv/projects/:projectId/history
+// ============================================================
+
+app.use(
+    '/api/oviv',
+    attachUser,
+    projectActivityRoutes
+);
+
+
+// ============================================================
+// SAÚDE DO POSTGRESQL
+// GET /api/db-health
+// ============================================================
+
+app.get('/api/db-health', async (_req, res) => {
     try {
         const result = await pool.query(
-            'SELECT current_database() AS database, NOW() AS server_time'
+            `SELECT
+                current_database() AS database,
+                NOW() AS server_time`
         );
 
         return res.json({
             status: 'ok',
             message: 'Conexão com o PostgreSQL funcionando!',
             database: result.rows[0].database,
-            serverTime: result.rows[0].server_time,
+            serverTime: result.rows[0].server_time
         });
     } catch (error) {
-        console.error('Falha ao consultar o banco:', error.message);
+        console.error(
+            'Falha ao consultar o banco:',
+            error.message
+        );
 
         return res.status(500).json({
             status: 'error',
-            message: 'Não foi possível consultar o banco de dados.',
+            message: 'Não foi possível consultar o banco de dados.'
         });
     }
 });
 
-// Lista as unidades cadastradas
-app.get('/api/units', async (req, res) => {
+
+// ============================================================
+// API ANTIGA: LISTAR UNIDADES
+// GET /api/units
+// ============================================================
+
+app.get('/api/units', async (_req, res) => {
     try {
         const result = await pool.query(`
             SELECT
@@ -67,445 +128,555 @@ app.get('/api/units', async (req, res) => {
 
         return res.status(200).json({
             total: result.rowCount,
-            units: result.rows,
+            units: result.rows
         });
     } catch (error) {
-        console.error('Erro ao consultar unidades:', error.message);
+        console.error(
+            'Erro ao consultar unidades:',
+            error.message
+        );
 
         return res.status(500).json({
-            message: 'Erro ao consultar as unidades.',
+            message: 'Erro ao consultar as unidades.'
         });
     }
 });
 
-// Pesquisa uma unidade pelo NETWORK ou HOSTNAME
-app.get('/api/units/search/:identifier', async (req, res) => {
-    try {
-        const { identifier } = req.params;
 
-        const result = await pool.query(
-            `SELECT
-                id,
-                network,
-                hostname,
-                network_to_clone,
-                coordinates,
-                quantity,
-                equipment_model,
-                vgr_id,
-                meraki_lan_network,
-                meraki_lan_ip,
-                dedicated_id,
-                internet_id,
-                contracted_speed,
-                service_type,
-                carrier,
-                lot,
-                fortinet_info,
-                raw_data
-            FROM units
-            WHERE
-                LOWER(TRIM(network)) = LOWER(TRIM($1))
-                OR LOWER(TRIM(hostname)) = LOWER(TRIM($1))
-                OR network ~ ('(^|[^0-9])' || $1 || '([^0-9]|$)')
-                OR hostname ~ ('(^|[^0-9])' || $1 || '([^0-9]|$)')
-            LIMIT 2`,
-            [identifier]
-        );
+// ============================================================
+// API ANTIGA: PESQUISAR UNIDADE POR NETWORK OU HOSTNAME
+// GET /api/units/search/:identifier
+// ============================================================
 
-        if (result.rowCount === 0) {
-            return res.status(404).json({
-                message: 'Nenhuma unidade encontrada com esse NETWORK ou HOSTNAME.',
-            });
-        }
+app.get(
+    '/api/units/search/:identifier',
+    async (req, res) => {
+        try {
+            const identifier = String(
+                req.params.identifier || ''
+            ).trim();
 
-        if (result.rowCount > 1) {
-            return res.status(409).json({
-                message: 'A pesquisa encontrou mais de uma unidade. É necessário refinar o identificador.',
-            });
-        }
+            if (!identifier) {
+                return res.status(400).json({
+                    message: 'Informe um NETWORK ou HOSTNAME.'
+                });
+            }
 
-        return res.status(200).json({
-            unit: result.rows[0],
-        });
-    } catch (error) {
-        console.error('Erro ao pesquisar unidade:', error.message);
+            // Escapa caracteres especiais para uma busca por trecho
+            // numérico não se transformar em uma expressão arbitrária.
+            const escapedIdentifier = identifier.replace(
+                /[.*+?^${}()|[\]\\]/g,
+                '\\$&'
+            );
 
-        return res.status(500).json({
-            message: 'Erro interno ao pesquisar a unidade.',
-        });
-    }
-});
+            const result = await pool.query(
+                `SELECT
+                    id,
+                    network,
+                    hostname,
+                    network_to_clone,
+                    coordinates,
+                    quantity,
+                    equipment_model,
+                    vgr_id,
+                    meraki_lan_network,
+                    meraki_lan_ip,
+                    dedicated_id,
+                    internet_id,
+                    contracted_speed,
+                    service_type,
+                    carrier,
+                    lot,
+                    fortinet_info,
+                    raw_data
+                 FROM units
+                 WHERE
+                    LOWER(TRIM(network)) = LOWER(TRIM($1))
+                    OR LOWER(TRIM(hostname)) = LOWER(TRIM($1))
+                    OR network ~ ('(^|[^0-9])' || $2 || '([^0-9]|$)')
+                    OR hostname ~ ('(^|[^0-9])' || $2 || '([^0-9]|$)')
+                 LIMIT 2`,
+                [
+                    identifier,
+                    escapedIdentifier
+                ]
+            );
 
-// Registra o check-in de um analista em uma unidade
-app.post('/api/visits/check-in', async (req, res) => {
-    const analystId = Number(req.body?.analystId);
-    const unitId = Number(req.body?.unitId);
+            if (result.rowCount === 0) {
+                return res.status(404).json({
+                    message:
+                        'Nenhuma unidade encontrada com esse NETWORK ou HOSTNAME.'
+                });
+            }
 
-    if (
-        !Number.isSafeInteger(analystId) ||
-        analystId <= 0 ||
-        !Number.isSafeInteger(unitId) ||
-        unitId <= 0
-    ) {
-        return res.status(200).json({
-            message: 'Informe um ID de analista e uma unidade válidos.',
-        });
-    }
-
-    try {
-        // Verifica se o analista existe e está ativo
-        const analyst = await pool.query(
-            `SELECT id
-             FROM users
-             WHERE id = $1
-               AND role = 'ANALISTA'
-               AND active = TRUE`,
-            [analystId]
-        );
-
-
-
-        if (analyst.rowCount === 0) {
-            return res.status(404).json({
-                message: 'Analista não encontrado ou inativo.',
-            });
-        }
-
-        // Verifica se a unidade existe
-        const unit = await pool.query(
-            'SELECT id FROM units WHERE id = $1',
-            [unitId]
-        );
-
-        if (unit.rowCount === 0) {
-            return res.status(404).json({
-                message: 'Unidade não encontrada.',
-            });
-        }
-
-        // Registra a visita com o horário gerado pelo PostgreSQL
-        const result = await pool.query(
-            `INSERT INTO visits (analyst_id, unit_id)
-             VALUES ($1, $2)
-             RETURNING
-                id,
-                analyst_id,
-                unit_id,
-                check_in_at,
-                checked_out_at`,
-            [analystId, unitId]
-        );
-
-        return res.status(201).json({
-            message: 'Check-in registrado com sucesso.',
-            visit: result.rows[0],
-        });
-    } catch (error) {
-        // Impede duas visitas abertas para o mesmo analista
-        if (
-            error.code === '23505' &&
-            error.constraint === 'visits_one_open_per_analyst'
-        ) {
-            return res.status(409).json({
-                message: 'Este analista já possui uma visita aberta.',
-            });
-        }
-
-        console.error('Erro ao registrar check-in:', error.message);
-
-        return res.status(500).json({
-            message: 'Não foi possível registrar o check-in.',
-        });
-    }
-});
-
-// Cria uma atividade dentro de uma visita
-app.post('/api/visits/:visitId/activities', async (req, res) => {
-    const visitId = Number(req.params.visitId);
-
-    const title = typeof req.body?.title === 'string'
-        ? req.body.title.trim()
-        : '';
-
-    const description = typeof req.body?.description === 'string'
-        ? req.body.description.trim() || null
-        : null;
-
-    if (
-        !Number.isSafeInteger(visitId) ||
-        visitId <= 0 ||
-        !title
-    ) {
-        return res.status(400).json({
-            message: 'Informe uma visita válida e o título da atividade.',
-        });
-    }
-
-    let client;
-    let transacaoAberta = false;
-
-    try {
-        client = await pool.connect();
-
-        await client.query('BEGIN');
-        transacaoAberta = true;
-
-        // Verifica se a visita existe e continua aberta
-        const visitaResult = await client.query(
-            `SELECT id, checked_out_at
-             FROM visits
-             WHERE id = $1
-             FOR UPDATE`,
-            [visitId]
-        );
-
-        if (visitaResult.rowCount === 0) {
-            await client.query('ROLLBACK');
-            transacaoAberta = false;
-
-            return res.status(404).json({
-                message: 'Visita não encontrada.',
-            });
-        }
-
-        if (visitaResult.rows[0].checked_out_at !== null) {
-            await client.query('ROLLBACK');
-            transacaoAberta = false;
-
-            return res.status(409).json({
-                message: 'Não é possível adicionar atividades a uma visita encerrada.',
-            });
-        }
-
-        // Cria a atividade com status inicial PENDENTE
-        const atividadeResult = await client.query(
-            `INSERT INTO activities (
-                visit_id,
-                title,
-                description
-            )
-            VALUES ($1, $2, $3)
-            RETURNING
-                id,
-                visit_id,
-                title,
-                description,
-                status,
-                created_at`,
-            [visitId, title, description]
-        );
-
-        const atividade = atividadeResult.rows[0];
-
-        // Registra o status inicial no histórico
-        await client.query(
-            `INSERT INTO activity_history (
-                activity_id,
-                previous_status,
-                new_status,
-                notes
-            )
-            VALUES ($1, NULL, 'PENDENTE', $2)`,
-            [atividade.id, 'Atividade criada na visita']
-        );
-
-        await client.query('COMMIT');
-        transacaoAberta = false;
-
-        return res.status(201).json({
-            message: 'Atividade criada com sucesso.',
-            activity: atividade,
-        });
-    } catch (error) {
-        if (client && transacaoAberta) {
-            await client.query('ROLLBACK');
-        }
-
-        console.error('Erro ao criar atividade:', error.message);
-
-        return res.status(500).json({
-            message: 'Não foi possível criar a atividade.',
-        });
-    } finally {
-        if (client) {
-            client.release();
-        }
-    }
-});
-
-// Atualiza o status de uma atividade
-app.patch('/api/activities/:activityId/status', async (req, res) => {
-    const activityId = Number(req.params.activityId);
-    const status = req.body?.status;
-
-    const statusesPermitidos = [
-        'PENDENTE',
-        'EM_DESLOCAMENTO',
-        'EM_EXECUCAO',
-        'CONCLUIDA',
-        'IMPEDIMENTO',
-        'CANCELADA',
-    ];
-
-    const notes = typeof req.body?.notes === 'string'
-        ? req.body.notes.trim() || null
-        : null;
-
-    if (!Number.isSafeInteger(activityId) || activityId <= 0) {
-        return res.status(400).json({
-            message: 'Informe um ID de atividade válido.',
-        });
-    }
-
-    if (!statusesPermitidos.includes(status)) {
-        return res.status(400).json({
-            message: 'Status inválido.',
-            statusPermitidos: statusesPermitidos,
-        });
-    }
-
-    let client;
-    let transacaoAberta = false;
-
-    try {
-        client = await pool.connect();
-
-        await client.query('BEGIN');
-        transacaoAberta = true;
-
-        // Busca a atividade e verifica se a visita continua aberta.
-        const consulta = await client.query(
-            `SELECT
-                a.id,
-                a.status,
-                a.started_at,
-                a.completed_at,
-                v.checked_out_at
-             FROM activities a
-             JOIN visits v ON v.id = a.visit_id
-             WHERE a.id = $1
-             FOR UPDATE OF a, v`,
-            [activityId]
-        );
-
-        if (consulta.rowCount === 0) {
-            await client.query('ROLLBACK');
-            transacaoAberta = false;
-
-            return res.status(404).json({
-                message: 'Atividade não encontrada.',
-            });
-        }
-
-        const atividadeAtual = consulta.rows[0];
-
-        if (atividadeAtual.checked_out_at !== null) {
-            await client.query('ROLLBACK');
-            transacaoAberta = false;
-
-            return res.status(409).json({
-                message: 'Não é possível alterar uma atividade de uma visita encerrada.',
-            });
-        }
-
-        if (
-            atividadeAtual.status === 'CONCLUIDA' ||
-            atividadeAtual.status === 'CANCELADA'
-        ) {
-            await client.query('ROLLBACK');
-            transacaoAberta = false;
-
-            return res.status(409).json({
-                message: 'Uma atividade concluída ou cancelada não pode ser alterada.',
-            });
-        }
-
-        if (atividadeAtual.status === status) {
-            await client.query('COMMIT');
-            transacaoAberta = false;
+            if (result.rowCount > 1) {
+                return res.status(409).json({
+                    message:
+                        'A pesquisa encontrou mais de uma unidade. É necessário refinar o identificador.'
+                });
+            }
 
             return res.status(200).json({
-                message: 'A atividade já possui esse status.',
-                activity: {
-                    id: atividadeAtual.id,
-                    status: atividadeAtual.status,
-                },
+                unit: result.rows[0]
+            });
+        } catch (error) {
+            console.error(
+                'Erro ao pesquisar unidade:',
+                error.message
+            );
+
+            return res.status(500).json({
+                message: 'Erro interno ao pesquisar a unidade.'
+            });
+        }
+    }
+);
+
+
+// ============================================================
+// API ANTIGA: CHECK-IN DE UM ANALISTA EM UMA UNIDADE
+// POST /api/visits/check-in
+//
+// Esta rota pertence ao fluxo de visitas. Ela não cadastra
+// usuários e não substitui o login do Oviv.
+// ============================================================
+
+app.post(
+    '/api/visits/check-in',
+    async (req, res) => {
+        const analystId = Number(req.body?.analystId);
+        const unitId = Number(req.body?.unitId);
+
+        if (
+            !Number.isSafeInteger(analystId) ||
+            analystId <= 0 ||
+            !Number.isSafeInteger(unitId) ||
+            unitId <= 0
+        ) {
+            return res.status(400).json({
+                message:
+                    'Informe um ID de analista e uma unidade válidos.'
             });
         }
 
-        // Atualiza o status e os horários correspondentes.
-        const resultado = await client.query(
-            `UPDATE activities
-             SET
-                status = $2,
-                started_at = CASE
-                    WHEN $2 = 'EM_EXECUCAO' AND started_at IS NULL
-                    THEN NOW()
-                    ELSE started_at
-                END,
-                completed_at = CASE
-                    WHEN $2 = 'CONCLUIDA' THEN NOW()
-                    ELSE completed_at
-                END,
-                updated_at = NOW()
-             WHERE id = $1
-             RETURNING id, visit_id, title, status,
-                       started_at, completed_at, updated_at`,
-            [activityId, status]
-        );
+        try {
+            const analyst = await pool.query(
+                `SELECT id
+                 FROM users
+                 WHERE id = $1
+                   AND role = 'ANALISTA'
+                   AND active = TRUE`,
+                [analystId]
+            );
 
-        // Registra a mudança no histórico.
-        await client.query(
-            `INSERT INTO activity_history (
-                activity_id,
-                previous_status,
-                new_status,
-                notes
-             )
-             VALUES ($1, $2, $3, $4)`,
-            [
-                activityId,
-                atividadeAtual.status,
-                status,
-                notes,
-            ]
-        );
+            if (analyst.rowCount === 0) {
+                return res.status(404).json({
+                    message: 'Analista não encontrado ou inativo.'
+                });
+            }
 
-        await client.query('COMMIT');
-        transacaoAberta = false;
+            const unit = await pool.query(
+                `SELECT id
+                 FROM units
+                 WHERE id = $1`,
+                [unitId]
+            );
 
-        return res.status(200).json({
-            message: 'Status atualizado com sucesso.',
-            activity: resultado.rows[0],
-        });
-    } catch (error) {
-        if (client && transacaoAberta) {
-            await client.query('ROLLBACK');
-        }
+            if (unit.rowCount === 0) {
+                return res.status(404).json({
+                    message: 'Unidade não encontrada.'
+                });
+            }
 
-        console.error('Erro ao atualizar status:', error.message);
+            const result = await pool.query(
+                `INSERT INTO visits (
+                    analyst_id,
+                    unit_id
+                 )
+                 VALUES ($1, $2)
+                 RETURNING
+                    id,
+                    analyst_id,
+                    unit_id,
+                    check_in_at,
+                    checked_out_at`,
+                [
+                    analystId,
+                    unitId
+                ]
+            );
 
-        return res.status(500).json({
-            message: 'Não foi possível atualizar o status da atividade.',
-        });
-    } finally {
-        if (client) {
-            client.release();
+            return res.status(201).json({
+                message: 'Check-in registrado com sucesso.',
+                visit: result.rows[0]
+            });
+        } catch (error) {
+            if (
+                error.code === '23505' &&
+                error.constraint === 'visits_one_open_per_analyst'
+            ) {
+                return res.status(409).json({
+                    message:
+                        'Este analista já possui uma visita aberta.'
+                });
+            }
+
+            console.error(
+                'Erro ao registrar check-in:',
+                error.message
+            );
+
+            return res.status(500).json({
+                message: 'Não foi possível registrar o check-in.'
+            });
         }
     }
-});
+);
 
-// Dados operacionais do dashboard gerencial
-app.get('/api/dashboard', async (req, res) => {
+
+// ============================================================
+// API ANTIGA: CRIAR ATIVIDADE DENTRO DE UMA VISITA
+// POST /api/visits/:visitId/activities
+// ============================================================
+
+app.post(
+    '/api/visits/:visitId/activities',
+    async (req, res) => {
+        const visitId = Number(req.params.visitId);
+
+        const title =
+            typeof req.body?.title === 'string'
+                ? req.body.title.trim()
+                : '';
+
+        const description =
+            typeof req.body?.description === 'string'
+                ? req.body.description.trim() || null
+                : null;
+
+        if (
+            !Number.isSafeInteger(visitId) ||
+            visitId <= 0 ||
+            !title
+        ) {
+            return res.status(400).json({
+                message:
+                    'Informe uma visita válida e o título da atividade.'
+            });
+        }
+
+        let client;
+        let transactionOpen = false;
+
+        try {
+            client = await pool.connect();
+
+            await client.query('BEGIN');
+            transactionOpen = true;
+
+            const visitResult = await client.query(
+                `SELECT id, checked_out_at
+                 FROM visits
+                 WHERE id = $1
+                 FOR UPDATE`,
+                [visitId]
+            );
+
+            if (visitResult.rowCount === 0) {
+                await client.query('ROLLBACK');
+                transactionOpen = false;
+
+                return res.status(404).json({
+                    message: 'Visita não encontrada.'
+                });
+            }
+
+            if (
+                visitResult.rows[0].checked_out_at !== null
+            ) {
+                await client.query('ROLLBACK');
+                transactionOpen = false;
+
+                return res.status(409).json({
+                    message:
+                        'Não é possível adicionar atividades a uma visita encerrada.'
+                });
+            }
+
+            const activityResult = await client.query(
+                `INSERT INTO activities (
+                    visit_id,
+                    title,
+                    description
+                 )
+                 VALUES ($1, $2, $3)
+                 RETURNING
+                    id,
+                    visit_id,
+                    title,
+                    description,
+                    status,
+                    created_at`,
+                [
+                    visitId,
+                    title,
+                    description
+                ]
+            );
+
+            const activity = activityResult.rows[0];
+
+            await client.query(
+                `INSERT INTO activity_history (
+                    activity_id,
+                    previous_status,
+                    new_status,
+                    notes
+                 )
+                 VALUES ($1, NULL, 'PENDENTE', $2)`,
+                [
+                    activity.id,
+                    'Atividade criada na visita'
+                ]
+            );
+
+            await client.query('COMMIT');
+            transactionOpen = false;
+
+            return res.status(201).json({
+                message: 'Atividade criada com sucesso.',
+                activity
+            });
+        } catch (error) {
+            if (client && transactionOpen) {
+                await client.query('ROLLBACK');
+            }
+
+            console.error(
+                'Erro ao criar atividade:',
+                error.message
+            );
+
+            return res.status(500).json({
+                message: 'Não foi possível criar a atividade.'
+            });
+        } finally {
+            if (client) {
+                client.release();
+            }
+        }
+    }
+);
+
+
+// ============================================================
+// API ANTIGA: ATUALIZAR STATUS DE UMA ATIVIDADE DE VISITA
+// PATCH /api/activities/:activityId/status
+// ============================================================
+
+app.patch(
+    '/api/activities/:activityId/status',
+    async (req, res) => {
+        const activityId = Number(req.params.activityId);
+        const status = req.body?.status;
+
+        const allowedStatuses = [
+            'PENDENTE',
+            'EM_DESLOCAMENTO',
+            'EM_EXECUCAO',
+            'CONCLUIDA',
+            'IMPEDIMENTO',
+            'CANCELADA'
+        ];
+
+        const notes =
+            typeof req.body?.notes === 'string'
+                ? req.body.notes.trim() || null
+                : null;
+
+        if (
+            !Number.isSafeInteger(activityId) ||
+            activityId <= 0
+        ) {
+            return res.status(400).json({
+                message: 'Informe um ID de atividade válido.'
+            });
+        }
+
+        if (!allowedStatuses.includes(status)) {
+            return res.status(400).json({
+                message: 'Status inválido.',
+                statusPermitidos: allowedStatuses
+            });
+        }
+
+        let client;
+        let transactionOpen = false;
+
+        try {
+            client = await pool.connect();
+
+            await client.query('BEGIN');
+            transactionOpen = true;
+
+            const currentResult = await client.query(
+                `SELECT
+                    a.id,
+                    a.status,
+                    a.started_at,
+                    a.completed_at,
+                    v.checked_out_at
+                 FROM activities a
+                 JOIN visits v
+                    ON v.id = a.visit_id
+                 WHERE a.id = $1
+                 FOR UPDATE OF a, v`,
+                [activityId]
+            );
+
+            if (currentResult.rowCount === 0) {
+                await client.query('ROLLBACK');
+                transactionOpen = false;
+
+                return res.status(404).json({
+                    message: 'Atividade não encontrada.'
+                });
+            }
+
+            const currentActivity = currentResult.rows[0];
+
+            if (currentActivity.checked_out_at !== null) {
+                await client.query('ROLLBACK');
+                transactionOpen = false;
+
+                return res.status(409).json({
+                    message:
+                        'Não é possível alterar uma atividade de uma visita encerrada.'
+                });
+            }
+
+            if (
+                currentActivity.status === 'CONCLUIDA' ||
+                currentActivity.status === 'CANCELADA'
+            ) {
+                await client.query('ROLLBACK');
+                transactionOpen = false;
+
+                return res.status(409).json({
+                    message:
+                        'Uma atividade concluída ou cancelada não pode ser alterada.'
+                });
+            }
+
+            if (currentActivity.status === status) {
+                await client.query('COMMIT');
+                transactionOpen = false;
+
+                return res.status(200).json({
+                    message: 'A atividade já possui esse status.',
+                    activity: {
+                        id: currentActivity.id,
+                        status: currentActivity.status
+                    }
+                });
+            }
+
+            const updatedResult = await client.query(
+                `UPDATE activities
+                 SET
+                    status = $2,
+
+                    started_at = CASE
+                        WHEN $2 = 'EM_EXECUCAO'
+                             AND started_at IS NULL
+                        THEN NOW()
+                        ELSE started_at
+                    END,
+
+                    completed_at = CASE
+                        WHEN $2 = 'CONCLUIDA'
+                        THEN NOW()
+                        ELSE completed_at
+                    END,
+
+                    updated_at = NOW()
+
+                 WHERE id = $1
+
+                 RETURNING
+                    id,
+                    visit_id,
+                    title,
+                    status,
+                    started_at,
+                    completed_at,
+                    updated_at`,
+                [
+                    activityId,
+                    status
+                ]
+            );
+
+            await client.query(
+                `INSERT INTO activity_history (
+                    activity_id,
+                    previous_status,
+                    new_status,
+                    notes
+                 )
+                 VALUES ($1, $2, $3, $4)`,
+                [
+                    activityId,
+                    currentActivity.status,
+                    status,
+                    notes
+                ]
+            );
+
+            await client.query('COMMIT');
+            transactionOpen = false;
+
+            return res.status(200).json({
+                message: 'Status atualizado com sucesso.',
+                activity: updatedResult.rows[0]
+            });
+        } catch (error) {
+            if (client && transactionOpen) {
+                await client.query('ROLLBACK');
+            }
+
+            console.error(
+                'Erro ao atualizar status:',
+                error.message
+            );
+
+            return res.status(500).json({
+                message:
+                    'Não foi possível atualizar o status da atividade.'
+            });
+        } finally {
+            if (client) {
+                client.release();
+            }
+        }
+    }
+);
+
+
+// ============================================================
+// API ANTIGA: DASHBOARD DE VISITAS
+// GET /api/dashboard
+// ============================================================
+
+app.get('/api/dashboard', async (_req, res) => {
     try {
-        // Indicadores gerais da operação
-        const resumo = await pool.query(`
+        const summary = await pool.query(`
             SELECT
                 (
                     SELECT COUNT(*)
                     FROM activities a
-                    JOIN visits v ON v.id = a.visit_id
+                    JOIN visits v
+                        ON v.id = a.visit_id
                     WHERE v.checked_out_at IS NULL
                       AND a.status = 'PENDENTE'
                 ) AS pending,
@@ -513,7 +684,8 @@ app.get('/api/dashboard', async (req, res) => {
                 (
                     SELECT COUNT(*)
                     FROM activities a
-                    JOIN visits v ON v.id = a.visit_id
+                    JOIN visits v
+                        ON v.id = a.visit_id
                     WHERE v.checked_out_at IS NULL
                       AND a.status IN (
                           'EM_DESLOCAMENTO',
@@ -524,7 +696,8 @@ app.get('/api/dashboard', async (req, res) => {
                 (
                     SELECT COUNT(*)
                     FROM activities a
-                    JOIN visits v ON v.id = a.visit_id
+                    JOIN visits v
+                        ON v.id = a.visit_id
                     WHERE v.checked_out_at IS NULL
                       AND a.status = 'IMPEDIMENTO'
                 ) AS impediments,
@@ -549,8 +722,7 @@ app.get('/api/dashboard', async (req, res) => {
                 ) AS active_analysts
         `);
 
-        // Visitas abertas e atividades de cada analista
-        const operacao = await pool.query(`
+        const operations = await pool.query(`
             SELECT
                 v.id AS visit_id,
                 v.check_in_at,
@@ -588,10 +760,9 @@ app.get('/api/dashboard', async (req, res) => {
         `);
 
         return res.status(200).json({
-            summary: resumo.rows[0],
-            activeVisits: operacao.rows
+            summary: summary.rows[0],
+            activeVisits: operations.rows
         });
-
     } catch (error) {
         console.error(
             'Erro ao consultar o dashboard:',
@@ -605,13 +776,45 @@ app.get('/api/dashboard', async (req, res) => {
 });
 
 
-app.get('/api/health', (req, res) => {
+// ============================================================
+// SAÚDE DO SERVIDOR
+// GET /api/health
+// ============================================================
+
+app.get('/api/health', (_req, res) => {
     return res.json({
         status: 'ok',
-        message: 'Servidor do Projeto-Oviv funcionando!',
+        message: 'Servidor do Projeto-Oviv funcionando!'
     });
 });
 
+
+// ============================================================
+// TRATAMENTO DE ERROS NÃO TRATADOS PELAS ROTAS
+// ============================================================
+
+app.use((error, _req, res, _next) => {
+    console.error(
+        'Erro inesperado no servidor:',
+        error.message
+    );
+
+    if (res.headersSent) {
+        return;
+    }
+
+    return res.status(500).json({
+        message: 'Ocorreu um erro interno no servidor.'
+    });
+});
+
+
+// ============================================================
+// INICIALIZAÇÃO
+// ============================================================
+
 app.listen(PORT, () => {
-    console.log(`Servidor rodando em http://localhost:${PORT}`);
+    console.log(
+        `Servidor rodando em http://localhost:${PORT}`
+    );
 });
