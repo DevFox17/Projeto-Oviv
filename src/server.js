@@ -3,6 +3,10 @@ import { pool } from './db.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import authRoutes from '../routes/auth.js';
+import projectActivityRoutes from '../routes/project-activities.js';
+import { attachUser } from './auth-middleware.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

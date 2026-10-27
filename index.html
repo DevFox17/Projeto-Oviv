@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,7 +10,45 @@
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
   <script src="./public/dashboard.js" defer></script>
 </head>
+
 <body>
+  <section id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="brand-mark">O</span>
+        <div>
+          <strong>oviv</strong>
+          <small>GESTÃO DE ATIVIDADES</small>
+        </div>
+      </div>
+
+      <p class="eyebrow">ACESSO AO SISTEMA</p>
+      <h1>Bem-vindo de volta</h1>
+      <p class="subtitle">
+        Entre com seu e-mail e senha para acessar seus projetos.
+      </p>
+
+      <form id="login-form">
+        <label for="login-email">E-mail</label>
+        <input id="login-email" name="email" type="email" autocomplete="username" required
+          placeholder="seu.email@empresa.com">
+
+        <label for="login-password">Senha</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required
+          placeholder="Digite sua senha">
+
+        <p id="login-message" class="login-message" role="alert"></p>
+
+        <button id="login-submit" class="button button-primary" type="submit">
+          Entrar
+        </button>
+      </form>
+
+      <p class="auth-footer">
+        Acesso destinado aos usuários cadastrados pelo gestor.
+      </p>
+    </div>
+  </section>
   <header class="topbar">
     <a class="brand" href="#projects" data-nav="projects" aria-label="Voltar aos projetos">
       <span class="brand-mark">O</span>
@@ -20,6 +59,9 @@
     </a>
 
     <div class="topbar-right">
+      <button id="logout-button" class="button button-quiet" type="button">
+        Sair
+      </button>
       <span class="demo-badge">DEMONSTRAÇÃO</span>
       <span id="current-project-label" class="current-project-label" hidden></span>
       <button id="reset-demo" class="button button-quiet" type="button">
@@ -48,6 +90,82 @@
 
       <div id="project-cards" class="project-grid"></div>
 
+      <section id="manager-panel" class="panel manager-panel" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">ADMINISTRAÇÃO</p>
+            <h2>Gerenciar analistas</h2>
+            <p>
+              Cadastre usuários para que possam entrar com
+              suas próprias credenciais.
+            </p>
+          </div>
+        </div>
+
+        <form id="analyst-create-form" class="form-body">
+          <div class="analyst-form-grid">
+            <div class="checkin-field">
+              <label for="analyst-full-name">Nome completo</label>
+              <input id="analyst-full-name" name="name" required maxlength="150" autocomplete="name"
+                placeholder="Nome do analista">
+            </div>
+
+            <div class="checkin-field">
+              <label for="analyst-email">E-mail de acesso</label>
+              <input id="analyst-email" name="email" type="email" required maxlength="254" autocomplete="email"
+                placeholder="analista@empresa.com">
+            </div>
+
+            <div class="checkin-field">
+              <label for="analyst-code">RE / Matrícula</label>
+              <input id="analyst-code" name="employeeCode" maxlength="50" placeholder="Matrícula (opcional)">
+            </div>
+
+            <div class="checkin-field">
+              <label for="analyst-password">Senha inicial</label>
+              <input id="analyst-password" name="password" type="password" minlength="12" autocomplete="new-password"
+                required placeholder="Mínimo de 12 caracteres">
+            </div>
+          </div>
+
+          <p class="small-muted">
+            Compartilhe a senha inicial com o analista de forma segura.
+            Ele usará o e-mail e essa senha para entrar no sistema.
+          </p>
+
+          <div class="form-actions">
+            <button id="analyst-create-submit" class="button button-primary" type="submit">
+              Cadastrar analista
+            </button>
+          </div>
+        </form>
+
+        <div class="panel-heading">
+          <div>
+            <h2>Analistas cadastrados</h2>
+            <p>Usuários ativos disponíveis para atribuição.</p>
+          </div>
+        </div>
+
+        <div class="table-scroll">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>NOME</th>
+                <th>E-MAIL</th>
+                <th>MATRÍCULA</th>
+              </tr>
+            </thead>
+            <tbody id="analysts-table-body"></tbody>
+          </table>
+        </div>
+
+        <div id="analysts-empty" class="empty-state" hidden>
+          <strong>Nenhum analista cadastrado</strong>
+          <p>Use o formulário acima para criar o primeiro usuário.</p>
+        </div>
+      </section>
       <p class="privacy-note">
         Cada projeto tem sua própria lista de atividades nesta demonstração.
         Os arquivos importados são lidos no navegador e não são enviados ao servidor.
@@ -132,10 +250,7 @@
 
           <div class="search-controls">
             <label class="sr-only" for="activity-search">Buscar em todos os campos</label>
-            <input
-              id="activity-search"
-              type="search"
-              autocomplete="off"
+            <input id="activity-search" type="search" autocomplete="off"
               placeholder="Ex.: ID link, ID VGR, endereço, hostname, município…">
 
             <label class="sr-only" for="status-filter">Filtrar por status</label>
@@ -217,11 +332,7 @@
               Arquivo do projeto <span class="required">*</span>
             </label>
 
-            <input
-              id="import-file"
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              required>
+            <input id="import-file" type="file" accept=".xlsx,.xls,.csv" required>
 
             <div class="privacy-note">
               <strong>Privacidade:</strong>
@@ -339,6 +450,45 @@
     </div>
   </main>
 
+  <dialog id="assign-dialog" class="detail-dialog">
+    <div class="dialog-heading">
+      <div>
+        <p class="eyebrow">DISTRIBUIÇÃO DE TRABALHO</p>
+        <h2>Atribuir atividade</h2>
+        <p id="assign-activity-label" class="subtitle"></p>
+      </div>
+      <button id="assign-close" class="button button-secondary" type="button">
+        Fechar
+      </button>
+    </div>
+
+    <form id="assign-form" class="form-body">
+      <label for="assign-analyst-select">
+        Analista responsável
+      </label>
+
+      <select id="assign-analyst-select" required>
+        <option value="">Carregando analistas…</option>
+      </select>
+
+      <p class="small-muted">
+        A atribuição reserva a atividade para o analista escolhido.
+        O cronômetro só começa quando ele entrar no sistema e adotar
+        a atividade.
+      </p>
+
+      <div class="form-actions">
+        <button id="assign-submit" class="button button-primary" type="submit">
+          Confirmar atribuição
+        </button>
+
+        <button id="assign-cancel" class="button button-secondary" type="button">
+          Cancelar
+        </button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Visualização da atividade: somente leitura, sem adoção automática -->
   <dialog id="activity-detail-dialog" class="detail-dialog">
     <div class="dialog-heading">
@@ -362,4 +512,5 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
+
 </html>

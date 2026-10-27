@@ -1,219 +1,390 @@
 'use strict';
 
-const STORAGE_KEY = 'oviv_project_demo_v1';
-const DEMO_USER = 'Administrador (demo)';
+/*
+ * Oviv — frontend integrado à API e ao PostgreSQL.
+ *
+ * A identidade real do analista depende do login.
+ * Para testes locais, caso não exista sessão, pedimos o ID
+ * de um usuário ativo com perfil ANALISTA no banco.
+ */
+
+const API_BASE = '/api/oviv';
 const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
-const MAX_HISTORY_ITEMS = 1500;
+const MAX_API_PAYLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_IMPORT_ROWS_PER_REQUEST = 10000;
 
-const PROJECTS = [
-    {
-        id: 'copasa',
-        name: 'Projeto COPASA',
-        shortName: 'COPASA',
-        description: 'Atividades e configurações lógicas do projeto COPASA.',
-        icon: 'C'
-    },
-    {
-        id: 'cemig',
-        name: 'Compania de energia',
-        shortName: 'CEMIG',
-        description: 'Atividades e configurações lógicas do projeto CEMIG.',
-        icon: 'E'
-    },
-    {
-        id: 'banco-brasil',
-        name: 'Teste BC',
-        shortName: 'BANCO DO BRASIL',
-        description: 'Atividades e configurações lógicas do projeto Banco do Brasil.',
-        icon: 'B'
-    }
-];
-
-const STATUS = {
-    PENDENTE: { label: 'Pendente', css: 'status-pending' },
-    EM_CONFIGURACAO: { label: 'Em configuração', css: 'status-configuring' },
-    CONCLUIDA: { label: 'Concluída', css: 'status-completed' },
-    IMPEDIMENTO: { label: 'Impedimento', css: 'status-blocked' },
-    CANCELADA: { label: 'Cancelada', css: 'status-cancelled' }
+const PROJECT_ICONS = {
+    copasa: 'C',
+    cemig: 'E',
+    'banco-brasil': 'B'
 };
 
-const $ = (selector, root = document) => root.querySelector(selector);
-const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const STATUS = {
+    PENDENTE: {
+        label: 'Pendente',
+        css: 'status-pending'
+    },
+    CONTATANDO_TECNICO: {
+        label: 'Contatando técnico',
+        css: 'status-stage'
+    },
+    INICIANDO_CONFIGURACAO: {
+        label: 'Iniciando configuração',
+        css: 'status-configuring'
+    },
+    FINALIZANDO_CONFIGURACAO: {
+        label: 'Finalizando configuração',
+        css: 'status-configuring'
+    },
+    TESTES_FINAIS: {
+        label: 'Realizando testes finais',
+        css: 'status-stage'
+    },
+    ATIVIDADE_MIGRADA: {
+        label: 'Atividade migrada',
+        css: 'status-completed'
+    },
+    IMPEDIMENTO: {
+        label: 'Impedimento',
+        css: 'status-blocked'
+    },
+    CANCELADA: {
+        label: 'Cancelada',
+        css: 'status-cancelled'
+    },
 
-let toastTimer;
+    // Compatibilidade com registros antigos.
+    EM_CONFIGURACAO: {
+        label: 'Em configuração',
+        css: 'status-configuring'
+    },
+    CONCLUIDA: {
+        label: 'Concluída',
+        css: 'status-completed'
+    }
+};
+
+const WORKFLOW_STATUSES = [
+    'CONTATANDO_TECNICO',
+    'INICIANDO_CONFIGURACAO',
+    'FINALIZANDO_CONFIGURACAO',
+    'TESTES_FINAIS',
+    'IMPEDIMENTO',
+    'ATIVIDADE_MIGRADA',
+    'CANCELADA'
+];
+
+const FINAL_STATUSES = new Set([
+    'ATIVIDADE_MIGRADA',
+    'CONCLUIDA',
+    'CANCELADA'
+]);
+
+const $ = (selector, root = document) =>
+    root.querySelector(selector);
+
+const $$ = (selector, root = document) =>
+    [...root.querySelectorAll(selector)];
+
+let toastTimer = null;
 let currentProjectId = null;
+let currentProjects = [];
+let currentActivities = [];
+let currentHistory = [];
 let pendingImport = null;
+let currentView = 'projects';
+let isRefreshing = false;
+let authenticatedUser = null;
+let analystsCache = [];
+let assigningActivityId = null;
 
-function newId(prefix = 'act') {
-    if (window.crypto?.randomUUID) {
-        return `${prefix}-${crypto.randomUUID()}`;
+
+/* =========================================================
+   1. COMUNICAÇÃO COM A API
+========================================================= */
+
+async function apiRequest(path, options = {}) {
+    let response;
+
+    try {
+        response = await fetch(`${API_BASE}${path}`, {
+            ...options,
+            credentials: 'same-origin',
+            headers: {
+                ...(options.body
+                    ? { 'Content-Type': 'application/json' }
+                    : {}),
+                ...(options.headers || {})
+            }
+        });
+    } catch (error) {
+        throw new Error(
+            'Não foi possível conectar à API. Confirme se o npm start continua em execução.'
+        );
     }
 
-    return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let payload = null;
+
+    const contentType =
+        response.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+        payload = await response.json().catch(() => null);
+    } else {
+        const bodyText = await response.text().catch(() => '');
+
+        payload = bodyText
+            ? { message: bodyText }
+            : null;
+    }
+
+    if (!response.ok) {
+        const error = new Error(
+            payload?.message ||
+            `A API retornou o erro HTTP ${response.status}.`
+        );
+
+        error.status = response.status;
+        error.payload = payload;
+
+        throw error;
+    }
+
+    return payload;
 }
 
-function demoActivity(id, data, status = 'PENDENTE', adopted = false) {
+function apiJson(method, body) {
     return {
-        id,
-        rowKey: `demo-${id}`,
-        rawData: data,
-        title: findTitleFromData(data) || `Atividade ${id}`,
-        identifier: findIdentifierFromData(data) || String(id),
-        city: findCityFromData(data) || '',
-        status,
-        adopted,
-        adoptedBy: adopted ? DEMO_USER : null,
-        adoptedAt: adopted
-            ? new Date(Date.now() - 25 * 60_000).toISOString()
-            : null,
-        createdAt: new Date(Date.now() - 7 * 60_000).toISOString()
+        method,
+        body: JSON.stringify(body)
     };
 }
 
-// Dados inteiramente fictícios para a demonstração.
-function seedData() {
-    const copasaRows = [
-        demoActivity('copasa-1', {
-            ID: 'DEMO-2263651',
-            UNIDADE: 'Unidade demonstrativa COPASA Centro',
-            MUNICIPIO: 'Cidade exemplo - MG',
-            'ID VGR': 'VGR-DEMO-01',
-            'VELOCIDADE DO LINK': 'Exemplo demonstrativo',
-            PRODUTO: 'CONFIGURAÇÃO LÓGICA (DEMO)'
-        }, 'PENDENTE'),
 
-        demoActivity('copasa-2', {
-            ID: 'DEMO-2263652',
-            UNIDADE: 'Unidade demonstrativa COPASA Norte',
-            MUNICIPIO: 'Cidade exemplo - MG',
-            'ID VGR': 'VGR-DEMO-02',
-            PRODUTO: 'CONFIGURAÇÃO LÓGICA (DEMO)'
-        }, 'EM_CONFIGURACAO', true),
+/* =========================================================
+   IDENTIDADE OBTIDA DA SESSÃO AUTENTICADA
+========================================================= */
 
-        demoActivity('copasa-3', {
-            ID: 'DEMO-2263653',
-            UNIDADE: 'Unidade demonstrativa COPASA Sul',
-            MUNICIPIO: 'Cidade exemplo - MG',
-            'ID VGR': 'VGR-DEMO-03',
-            PRODUTO: 'CONFIGURAÇÃO LÓGICA (DEMO)'
-        }, 'CONCLUIDA')
-    ];
+function getLoggedUserId() {
+    return authenticatedUser?.id
+        ? Number(authenticatedUser.id)
+        : null;
+}
 
-    const cemigRows = [
-        demoActivity('cemig-1', {
-            ID: 'DEMO-CEMIG-001',
-            UNIDADE: 'Unidade demonstrativa CEMIG Centro',
-            MUNICIPIO: 'Cidade exemplo - MG',
-            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
-        }),
+function getLoggedUserName() {
+    return authenticatedUser?.name || '';
+}
 
-        demoActivity('cemig-2', {
-            ID: 'DEMO-CEMIG-002',
-            UNIDADE: 'Unidade demonstrativa CEMIG Leste',
-            MUNICIPIO: 'Cidade exemplo - MG',
-            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
-        }, 'IMPEDIMENTO')
-    ];
+function isManagerUser() {
+    const role = String(
+        authenticatedUser?.role || ''
+    ).trim().toUpperCase();
 
-    const bbRows = [
-        demoActivity('bb-1', {
-            ID: 'DEMO-BB-001',
-            UNIDADE: 'Unidade demonstrativa Banco do Brasil 01',
-            MUNICIPIO: 'Cidade exemplo - DF',
-            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
-        }),
+    return [
+        'GP',
+        'GESTOR',
+        'GERENTE',
+        'GERENTE DE PROJETO',
+        'ADMIN',
+        'ADMINISTRADOR'
+    ].includes(role);
+}
 
-        demoActivity('bb-2', {
-            ID: 'DEMO-BB-002',
-            UNIDADE: 'Unidade demonstrativa Banco do Brasil 02',
-            MUNICIPIO: 'Cidade exemplo - SP',
-            'TIPO DE ATIVIDADE': 'Configuração lógica demonstrativa'
-        })
-    ];
+function isAnalystUser() {
+    return (
+        String(authenticatedUser?.role || '')
+            .trim()
+            .toUpperCase() === 'ANALISTA'
+    );
+}
 
+function refreshUserLabel() {
+    const label = $('#current-user-label');
+
+    if (!label) return;
+
+    if (!authenticatedUser) {
+        label.textContent = 'Não autenticado';
+        return;
+    }
+
+    const roleLabel = isManagerUser()
+        ? 'Gestor'
+        : 'Analista';
+
+    label.textContent =
+        `${authenticatedUser.name} · ${roleLabel}`;
+}
+
+/* =========================================================
+   3. AVISOS DA INTERFACE
+========================================================= */
+function setBackendNotice(connected, errorMessage = '') {
+    const badge = $('.demo-badge');
+    const notice = $('.demo-notice');
+
+    if (badge) {
+        badge.textContent = connected
+            ? 'API + POSTGRESQL'
+            : 'API DESCONECTADA';
+    }
+
+    if (notice) {
+        notice.innerHTML = connected
+            ? '<strong>Sessão autenticada.</strong> Os dados são compartilhados pelo servidor. As permissões de gestor e analista são verificadas pela API.'
+            : `<strong>Falha na conexão.</strong> ${esc(errorMessage || 'Verifique se o servidor está funcionando.')}`;
+    }
+
+    const importSubtitle =
+        $('#view-import .page-heading .subtitle');
+
+    if (importSubtitle) {
+        importSubtitle.textContent =
+            'O arquivo é lido no navegador e suas linhas são enviadas à API para armazenamento no PostgreSQL.';
+    }
+
+    const privacyNote =
+        $('#view-import .privacy-note');
+
+    if (privacyNote) {
+        privacyNote.innerHTML =
+            '<strong>Privacidade:</strong> somente os dados extraídos da planilha são enviados ao servidor. Importe apenas informações autorizadas pela empresa.';
+    }
+
+    const warningNote =
+        $('#view-import .warning-note');
+
+    if (warningNote) {
+        warningNote.textContent =
+            'Confira o projeto e a prévia antes de confirmar a importação. As operações serão compartilhadas com os usuários autorizados.';
+    }
+
+    const historyWarning = $('.history-warning');
+
+    if (historyWarning) {
+        historyWarning.textContent =
+            'Histórico carregado do PostgreSQL. Os registros são compartilhados entre os usuários do sistema.';
+    }
+
+    const importEyebrow =
+        $('#view-import .eyebrow');
+
+    if (importEyebrow) {
+        importEyebrow.textContent =
+            'IMPORTAÇÃO PARA O SERVIDOR';
+    }
+}
+
+
+/* =========================================================
+   4. NORMALIZAÇÃO DOS DADOS VINDOS DO POSTGRESQL
+========================================================= */
+
+function normalizeProject(project) {
     return {
-        version: 1,
+        id: String(project.id),
+        name: project.name || project.id,
+        description: project.description || '',
+        icon: PROJECT_ICONS[project.id] ||
+            String(project.name || 'O').slice(0, 1),
 
-        projects: {
-            copasa: { activities: copasaRows },
-            cemig: { activities: cemigRows },
-            'banco-brasil': { activities: bbRows }
-        },
-
-        auditLog: [
-            {
-                id: newId('log'),
-                at: new Date().toISOString(),
-                projectId: null,
-                action: 'Demonstração iniciada',
-                user: DEMO_USER,
-                detail: 'Carregados registros fictícios de exemplo; nenhuma planilha real foi importada.'
-            }
-        ]
+        total: Number(project.total || 0),
+        pending: Number(project.pending || 0),
+        adopted: Number(project.adopted || 0),
+        inProgress: Number(project.in_progress || 0),
+        completed: Number(project.completed || 0),
+        blocked: Number(project.blocked || 0),
+        activeSeconds: Number(project.active_seconds || 0)
     };
 }
 
-function loadState() {
-    try {
-        const saved = localStorage.getItem(STORAGE_KEY);
+function normalizeActivity(row) {
+    const rawData =
+        row.source_row &&
+            typeof row.source_row === 'object'
+            ? row.source_row
+            : {};
 
-        if (saved) {
-            const parsed = JSON.parse(saved);
+    const adoptedById =
+        row.adopted_by_user_id == null
+            ? null
+            : Number(row.adopted_by_user_id);
 
-            if (
-                parsed &&
-                parsed.projects &&
-                Array.isArray(parsed.auditLog)
-            ) {
-                for (const project of PROJECTS) {
-                    if (!parsed.projects[project.id]) {
-                        parsed.projects[project.id] = { activities: [] };
-                    }
+    const assignedToId =
+        row.assigned_to_user_id == null
+            ? null
+            : Number(row.assigned_to_user_id);
 
-                    if (!Array.isArray(parsed.projects[project.id].activities)) {
-                        parsed.projects[project.id].activities = [];
-                    }
-                }
+    return {
+        id: Number(row.id),
+        projectId: String(row.project_id),
+        rowKey: row.row_key || '',
 
-                return parsed;
-            }
-        }
-    } catch (error) {
-        console.error('Falha ao carregar a demonstração:', error);
-    }
+        identifier:
+            row.identifier ||
+            findIdentifierFromData(rawData) ||
+            String(row.id),
 
-    const initial = seedData();
+        title:
+            row.title ||
+            findTitleFromData(rawData) ||
+            'Atividade sem título',
 
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-    } catch (error) {
-        console.warn('Não foi possível inicializar o armazenamento local:', error);
-    }
+        city:
+            row.city ||
+            findCityFromData(rawData) ||
+            '',
 
-    return initial;
+        rawData,
+        status: row.status || 'PENDENTE',
+
+        assignedToId,
+        assignedTo: row.assigned_to_name || '',
+        assignedById: row.assigned_by_user_id ?? null,
+        assignedAt: row.assigned_at || null,
+
+        adopted: adoptedById !== null,
+        adoptedById,
+        adoptedBy: row.analyst_name || '',
+
+        adoptedAt: row.adopted_at || null,
+        startedAt: row.started_at || null,
+        completedAt: row.completed_at || null,
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null
+    };
+}
+function normalizeHistory(row) {
+    return {
+        id: row.id,
+        at: row.created_at,
+        projectId: row.project_id,
+        activityId: row.activity_id,
+        identifier: row.activity_identifier || '',
+        action: row.action || 'Ação',
+        user: row.user_name || 'Sistema',
+        previousStatus: row.previous_status || '',
+        newStatus: row.new_status || '',
+        detail: row.details || ''
+    };
 }
 
-let state = loadState();
 
-function saveState() {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        return true;
-    } catch (error) {
-        console.error('Não foi possível salvar os dados:', error);
-        toast('O armazenamento local pode estar cheio. Os dados não foram salvos.', true);
-        return false;
-    }
-}
+/* =========================================================
+   5. UTILITÁRIOS
+========================================================= */
 
 function esc(value) {
-    return String(value ?? '').replace(/[&<>"']/g, char => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-    })[char]);
+    return String(value ?? '').replace(
+        /[&<>"']/g,
+        char => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        })[char]
+    );
 }
 
 function normalizeText(value) {
@@ -231,10 +402,17 @@ function normalizeHeader(value) {
 }
 
 function cleanCell(value) {
-    if (value === null || value === undefined) return '';
-    if (value instanceof Date) return value.toISOString();
+    if (value === null || value === undefined) {
+        return '';
+    }
 
-    return String(value).replace(/\s+/g, ' ').trim();
+    if (value instanceof Date) {
+        return value.toISOString();
+    }
+
+    return String(value)
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 function formatDateTime(value) {
@@ -252,16 +430,25 @@ function formatDateTime(value) {
     }).format(date);
 }
 
-function isoTime(value) {
-    const date = new Date(value);
+function formatDuration(totalSeconds) {
+    const seconds = Math.max(
+        0,
+        Math.floor(Number(totalSeconds) || 0)
+    );
 
-    return Number.isNaN(date.getTime())
-        ? String(value ?? '')
-        : date.toISOString();
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remainder = seconds % 60;
+
+    return [hours, minutes, remainder]
+        .map(value => String(value).padStart(2, '0'))
+        .join(':');
 }
 
 function toast(message, isError = false) {
     const element = $('#toast');
+
+    if (!element) return;
 
     element.textContent = message;
     element.className = isError ? 'toast error' : 'toast';
@@ -269,160 +456,121 @@ function toast(message, isError = false) {
 
     clearTimeout(toastTimer);
 
-    toastTimer = setTimeout(() => {
+    toastTimer = window.setTimeout(() => {
         element.hidden = true;
-    }, 3800);
+    }, 4500);
 }
 
 function getProject(projectId = currentProjectId) {
-    return PROJECTS.find(project => project.id === projectId) || null;
-}
-
-function getProjectData(projectId = currentProjectId) {
-    if (!state.projects[projectId]) {
-        state.projects[projectId] = { activities: [] };
-    }
-
-    if (!Array.isArray(state.projects[projectId].activities)) {
-        state.projects[projectId].activities = [];
-    }
-
-    return state.projects[projectId];
-}
-
-function getActivities(projectId = currentProjectId) {
-    return getProjectData(projectId).activities;
-}
-
-function currentActivity(activityId) {
-    return getActivities().find(
-        activity => activity.id === activityId
+    return currentProjects.find(
+        project => project.id === projectId
     ) || null;
 }
 
-function logAction(action, detail, projectId = currentProjectId) {
-    state.auditLog.unshift({
-        id: newId('log'),
-        at: new Date().toISOString(),
-        projectId,
-        action,
-        user: DEMO_USER,
-        detail: String(detail || '')
+function currentActivity(activityId) {
+    return currentActivities.find(
+        activity =>
+            String(activity.id) === String(activityId)
+    ) || null;
+}
+
+function firstName(fullName) {
+    const name = String(fullName || '').trim();
+
+    return name
+        ? name.split(/\s+/)[0]
+        : '—';
+}
+
+
+/* =========================================================
+   6. STATUS E CRONÔMETRO
+========================================================= */
+
+function isInProgress(activity) {
+    return Boolean(activity?.adopted) &&
+        Boolean(activity?.startedAt) &&
+        !FINAL_STATUSES.has(activity.status);
+}
+
+function elapsedSeconds(activity) {
+    const startValue =
+        activity?.startedAt ||
+        activity?.adoptedAt;
+
+    if (!startValue) return 0;
+
+    const start = new Date(startValue).getTime();
+
+    if (!Number.isFinite(start)) return 0;
+
+    const finalTime =
+        FINAL_STATUSES.has(activity.status) &&
+            activity.completedAt
+            ? new Date(activity.completedAt).getTime()
+            : Date.now();
+
+    const end = Number.isFinite(finalTime)
+        ? finalTime
+        : Date.now();
+
+    return Math.max(
+        0,
+        Math.floor((end - start) / 1000)
+    );
+}
+
+function statusBadge(status) {
+    const info = STATUS[status] || STATUS.PENDENTE;
+
+    return `
+        <span class="status-badge ${info.css}">
+            ${esc(info.label)}
+        </span>
+    `;
+}
+
+function updateElapsedDisplays() {
+    if (currentView !== 'dashboard') return;
+
+    $$('[data-elapsed-activity-id]').forEach(element => {
+        const activity = currentActivity(
+            element.dataset.elapsedActivityId
+        );
+
+        if (activity && activity.adopted) {
+            element.textContent = formatDuration(
+                elapsedSeconds(activity)
+            );
+        }
     });
 
-    if (state.auditLog.length > MAX_HISTORY_ITEMS) {
-        state.auditLog.length = MAX_HISTORY_ITEMS;
+    const activeSeconds = currentActivities
+        .filter(isInProgress)
+        .reduce(
+            (sum, activity) =>
+                sum + elapsedSeconds(activity),
+            0
+        );
+
+    const totalElement = $('#kpi-active-time');
+
+    if (totalElement) {
+        totalElement.textContent =
+            `Tempo acumulado: ${formatDuration(activeSeconds)}`;
     }
 }
 
-function setView(viewName) {
-    const valid = ['projects', 'dashboard', 'import', 'history'];
 
-    if (!valid.includes(viewName)) {
-        viewName = 'projects';
-    }
-
-    if (viewName === 'projects') {
-        currentProjectId = null;
-    }
-
-    if (viewName !== 'projects' && !currentProjectId) {
-        viewName = 'projects';
-    }
-
-    $('#view-projects').hidden = viewName !== 'projects';
-    $('#project-workspace').hidden = viewName === 'projects';
-
-    ['dashboard', 'import', 'history'].forEach(name => {
-        $(`#view-${name}`).hidden = name !== viewName;
-    });
-
-    $$('.project-nav [data-nav]').forEach(button => {
-        button.classList.toggle('active', button.dataset.nav === viewName);
-    });
-
-    if (viewName === 'dashboard') renderDashboard();
-    if (viewName === 'import') resetImportView();
-    if (viewName === 'history') renderHistory();
-
-    const project = getProject();
-
-    $('#current-project-label').hidden = !project;
-    $('#current-project-label').textContent = project ? project.name : '';
-
-    if (location.hash !== `#${viewName}`) {
-        history.replaceState(null, '', `#${viewName}`);
-    }
-}
-
-function selectProject(projectId) {
-    if (!getProject(projectId)) return;
-
-    currentProjectId = projectId;
-
-    renderProjectCards();
-    setView('dashboard');
-}
-
-function renderProjectCards() {
-    $('#project-cards').innerHTML = PROJECTS.map(project => {
-        const activities = getActivities(project.id);
-        const adoptedCount = activities.filter(activity => activity.adopted).length;
-
-        return `
-            <article class="project-card">
-                <div class="project-card-top">
-                    <span class="project-icon">${esc(project.icon)}</span>
-                    <span class="project-count">${activities.length} atividades</span>
-                </div>
-
-                <h2>${esc(project.name)}</h2>
-                <p>${esc(project.description)}</p>
-
-                <span class="project-card-meta">
-                    ${adoptedCount} adotadas
-                </span>
-
-                <button
-                    class="button button-primary"
-                    type="button"
-                    data-action="open-project"
-                    data-project-id="${esc(project.id)}">
-
-                    Entrar no projeto →
-                </button>
-            </article>
-        `;
-    }).join('');
-}
-
-function renderSummary(activities) {
-    $('#kpi-total').textContent = activities.length;
-
-    $('#kpi-pending').textContent = activities.filter(
-        activity => activity.status === 'PENDENTE'
-    ).length;
-
-    $('#kpi-adopted').textContent = activities.filter(
-        activity => activity.adopted
-    ).length;
-
-    $('#kpi-configuring').textContent = activities.filter(
-        activity => activity.status === 'EM_CONFIGURACAO'
-    ).length;
-
-    $('#kpi-completed').textContent = activities.filter(
-        activity => activity.status === 'CONCLUIDA'
-    ).length;
-
-    $('#kpi-blocked').textContent = activities.filter(
-        activity => activity.status === 'IMPEDIMENTO'
-    ).length;
-}
+/* =========================================================
+   7. LEITURA E BUSCA NOS CAMPOS DA PLANILHA
+========================================================= */
 
 function getFieldValue(rawData, aliases) {
     for (const [key, value] of Object.entries(rawData || {})) {
-        if (!aliases.includes(normalizeHeader(key))) continue;
+        if (!aliases.includes(normalizeHeader(key))) {
+            continue;
+        }
 
         const cleaned = cleanCell(value);
 
@@ -436,6 +584,7 @@ function findTitleFromData(rawData) {
     return getFieldValue(rawData, [
         'ATIVIDADE',
         'TITULO',
+        'TÍTULO',
         'NOME DA ATIVIDADE',
         'UNIDADE',
         'NOME DA UNIDADE',
@@ -453,6 +602,7 @@ function findIdentifierFromData(rawData) {
         'ID DEDICADO',
         'ID INTERNET',
         'CODIGO',
+        'CÓDIGO',
         'IDENTIFICADOR'
     ]);
 }
@@ -460,14 +610,14 @@ function findIdentifierFromData(rawData) {
 function findCityFromData(rawData) {
     return getFieldValue(rawData, [
         'MUNICIPIO',
+        'MUNICÍPIO',
         'CIDADE',
         'MUNICIPIO DA UNIDADE'
     ]);
 }
 
-// Pesquisa todos os valores e nomes de colunas importados.
 function searchableText(activity) {
-    const rawText = Object.entries(activity.rawData || {})
+    const raw = Object.entries(activity.rawData || {})
         .map(([key, value]) => `${key} ${cleanCell(value)}`)
         .join(' ');
 
@@ -478,42 +628,291 @@ function searchableText(activity) {
         activity.city,
         activity.status,
         STATUS[activity.status]?.label,
-        activity.adopted ? 'adotada adotado' : 'não adotada disponível',
+        activity.adopted
+            ? 'adotada adotado'
+            : 'não adotada disponível',
         activity.adoptedBy,
-        rawText
+        raw
     ].join(' '));
 }
 
-function statusBadge(status) {
-    const info = STATUS[status] || STATUS.PENDENTE;
 
-    return `
-        <span class="status-badge ${info.css}">
-            ${esc(info.label)}
-        </span>
-    `;
+/* =========================================================
+   8. SELEÇÃO DOS PROJETOS
+========================================================= */
+
+function renderProjectCards() {
+    const container = $('#project-cards');
+
+    if (!container) return;
+
+    if (!currentProjects.length) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <strong>Nenhum projeto disponível</strong>
+                <p>Confira a conexão do servidor e a tabela oviv_projects no PostgreSQL.</p>
+                <button
+                    class="button button-primary"
+                    type="button"
+                    data-action="reload-projects"
+                >
+                    Tentar novamente
+                </button>
+            </div>
+        `;
+
+        return;
+    }
+
+    container.innerHTML = currentProjects.map(project => `
+        <article class="project-card">
+            <div class="project-card-top">
+                <span class="project-icon">
+                    ${esc(project.icon)}
+                </span>
+
+                <span class="project-count">
+                    ${project.total} atividades
+                </span>
+            </div>
+
+            <h2>${esc(project.name)}</h2>
+
+            <p>${esc(project.description)}</p>
+
+            <span class="project-card-meta">
+                ${project.adopted} adotadas ·
+                ${project.inProgress} em andamento
+            </span>
+
+            <button
+                class="button button-primary"
+                type="button"
+                data-action="open-project"
+                data-project-id="${esc(project.id)}"
+            >
+                Entrar no projeto →
+            </button>
+        </article>
+    `).join('');
 }
 
+async function loadProjects({ silent = false } = {}) {
+    try {
+        const result = await apiRequest('/projects');
+
+        currentProjects = (result.projects || [])
+            .map(normalizeProject);
+
+        setBackendNotice(true);
+        renderProjectCards();
+
+        if (
+            currentProjectId &&
+            !getProject(currentProjectId)
+        ) {
+            currentProjectId = null;
+            setView('projects');
+        }
+
+        return currentProjects;
+    } catch (error) {
+        console.error('Falha ao carregar projetos:', error);
+
+        setBackendNotice(false, error.message);
+        renderProjectCards();
+
+        if (!silent) {
+            toast(error.message, true);
+        }
+
+        throw error;
+    }
+}
+
+
+/* =========================================================
+   9. CARREGAR ATIVIDADES E HISTÓRICO DO BANCO
+========================================================= */
+
+async function loadActivities(projectId = currentProjectId) {
+    if (!projectId) return [];
+
+    const result = await apiRequest(
+        `/projects/${encodeURIComponent(projectId)}/activities`
+    );
+
+    currentActivities = (result.activities || [])
+        .map(normalizeActivity);
+
+    renderSummary();
+    renderActivityRows();
+
+    return currentActivities;
+}
+
+async function loadHistory(projectId = currentProjectId) {
+    if (!projectId) return [];
+
+    const result = await apiRequest(
+        `/projects/${encodeURIComponent(projectId)}/history?limit=1000`
+    );
+
+    currentHistory = (result.history || [])
+        .map(normalizeHistory);
+
+    if (currentView === 'history') {
+        renderHistory();
+    }
+
+    return currentHistory;
+}
+
+async function refreshCurrentProject({ silent = false } = {}) {
+    if (!currentProjectId || isRefreshing) return;
+
+    // Não recrie o seletor enquanto o analista está escolhendo um status.
+    if (
+        document.activeElement?.matches(
+            'select[data-action="change-status"]'
+        )
+    ) {
+        return;
+    }
+
+    isRefreshing = true;
+
+    try {
+        await loadProjects({ silent: true });
+
+        if (!currentProjectId) return;
+
+        await Promise.all([
+            loadActivities(currentProjectId),
+            loadHistory(currentProjectId)
+        ]);
+
+        if (currentView === 'dashboard') {
+            renderDashboard();
+        }
+
+        if (currentView === 'history') {
+            renderHistory();
+        }
+    } catch (error) {
+        console.error(
+            'Falha ao atualizar dados do projeto:',
+            error
+        );
+
+        if (!silent) {
+            toast(error.message, true);
+        }
+    } finally {
+        isRefreshing = false;
+    }
+}
+
+
+/* =========================================================
+   10. CARTÕES DOS TOTAIS
+========================================================= */
+
+function renderSummary() {
+    const activities = currentActivities;
+    const active = activities.filter(isInProgress);
+
+    $('#kpi-total').textContent = activities.length;
+
+    $('#kpi-pending').textContent =
+        activities.filter(activity =>
+            activity.status === 'PENDENTE' &&
+            !activity.adopted
+        ).length;
+
+    $('#kpi-adopted').textContent =
+        activities.filter(activity =>
+            activity.adopted
+        ).length;
+
+    $('#kpi-configuring').textContent =
+        active.length;
+
+    const activeSeconds = active.reduce(
+        (sum, activity) =>
+            sum + elapsedSeconds(activity),
+        0
+    );
+
+    $('#kpi-active-time').textContent =
+        `Tempo acumulado: ${formatDuration(activeSeconds)}`;
+
+    $('#kpi-completed').textContent =
+        activities.filter(activity =>
+            ['ATIVIDADE_MIGRADA', 'CONCLUIDA']
+                .includes(activity.status)
+        ).length;
+
+    $('#kpi-blocked').textContent =
+        activities.filter(activity =>
+            activity.status === 'IMPEDIMENTO'
+        ).length;
+}
+
+
+/* =========================================================
+   11. TABELA DE ATIVIDADES
+========================================================= */
+
 function renderActivityRows() {
-    const activities = getActivities();
-    const query = normalizeText($('#activity-search').value);
+    if (!$('#activity-search')) return;
+
+    const activities = currentActivities;
+
+    const query = normalizeText(
+        $('#activity-search').value
+    );
+
     const statusFilter = $('#status-filter').value;
     const adoptionFilter = $('#adoption-filter').value;
 
+    const userId = getLoggedUserId();
+    const manager = isManagerUser();
+    const analyst = isAnalystUser();
+
     const filtered = activities.filter(activity => {
-        if (query && !searchableText(activity).includes(query)) {
+        if (
+            query &&
+            !searchableText(activity).includes(query)
+        ) {
             return false;
         }
 
-        if (statusFilter && activity.status !== statusFilter) {
+        if (
+            statusFilter &&
+            activity.status !== statusFilter
+        ) {
             return false;
         }
 
-        if (adoptionFilter === 'adopted' && !activity.adopted) {
+        if (
+            adoptionFilter === 'adopted' &&
+            !activity.adopted
+        ) {
             return false;
         }
 
-        if (adoptionFilter === 'available' && activity.adopted) {
+        if (
+            adoptionFilter === 'available' &&
+            activity.adopted
+        ) {
+            return false;
+        }
+
+        if (
+            adoptionFilter === 'in-progress' &&
+            !isInProgress(activity)
+        ) {
             return false;
         }
 
@@ -523,148 +922,284 @@ function renderActivityRows() {
     $('#results-count').textContent =
         `${filtered.length} de ${activities.length} atividades`;
 
-    $('#activities-table-body').innerHTML = filtered.map(activity => {
-        const title = activity.title ||
-            findTitleFromData(activity.rawData) ||
-            'Atividade sem título';
+    $('#activities-table-body').innerHTML =
+        filtered.map(activity => {
+            const title =
+                activity.title ||
+                'Atividade sem título';
 
-        const identifier = activity.identifier ||
-            findIdentifierFromData(activity.rawData) ||
-            activity.id;
+            const identifier =
+                activity.identifier ||
+                String(activity.id);
 
-        const city = activity.city ||
-            findCityFromData(activity.rawData) ||
-            '—';
+            const city =
+                activity.city ||
+                '—';
 
-        const adoptedInfo = activity.adopted
-            ? `
-                <span class="adoption-label adopted">
-                    Adotada<br>
-                    <small>${esc(activity.adoptedBy || DEMO_USER)}</small>
-                </span>
-            `
-            : '<span class="adoption-label">Disponível</span>';
+            const responsible = activity.adopted
+                ? activity.adoptedBy
+                : activity.assignedTo;
 
-        const actionButton = activity.adopted
-            ? `
-                <button
-                    class="button button-adopted button-small"
-                    type="button"
-                    disabled>
+            const analystName = responsible
+                ? firstName(responsible)
+                : '—';
 
-                    Atividade adotada
-                </button>
-            `
-            : `
-                <button
-                    class="button button-adopt button-small"
-                    type="button"
-                    data-action="adopt-activity"
-                    data-activity-id="${esc(activity.id)}">
+            const time = activity.adopted
+                ? formatDuration(elapsedSeconds(activity))
+                : '—';
 
-                    Adotar atividade
-                </button>
+            let adoptionInfo = 'Disponível';
+
+            if (activity.adopted) {
+                adoptionInfo =
+                    `Adotada por ${activity.adoptedBy || 'Analista'}`;
+            } else if (activity.assignedTo) {
+                adoptionInfo =
+                    `Atribuída a ${activity.assignedTo}`;
+            }
+
+            const adoptionClass =
+                activity.adopted || activity.assignedTo
+                    ? 'adoption-label adopted'
+                    : 'adoption-label';
+
+            const canUpdateStatus =
+                analyst &&
+                activity.adopted &&
+                Number(activity.adoptedById) === userId &&
+                !FINAL_STATUSES.has(activity.status);
+
+            const statusControl = canUpdateStatus
+                ? `
+                    <select
+                        class="status-select"
+                        aria-label="Atualizar etapa de ${esc(identifier)}"
+                        data-action="change-status"
+                        data-activity-id="${esc(activity.id)}"
+                    >
+                        ${WORKFLOW_STATUSES.map(value => `
+                            <option
+                                value="${value}"
+                                ${activity.status === value ? 'selected' : ''}
+                            >
+                                ${esc(STATUS[value].label)}
+                            </option>
+                        `).join('')}
+                    </select>
+                `
+                : statusBadge(activity.status);
+
+            let buttons = '';
+
+            // O gestor pode atribuir ou reatribuir somente
+            // atividades ainda não adotadas.
+            if (manager && !activity.adopted) {
+                buttons += `
+                    <button
+                        class="button button-assign button-small"
+                        type="button"
+                        data-action="assign-activity"
+                        data-activity-id="${esc(activity.id)}"
+                    >
+                        ${activity.assignedTo
+                        ? 'Atribuir novamente'
+                        : 'Atribuir'}
+                    </button>
+                `;
+            }
+
+            // O analista só pode adotar uma atividade livre
+            // ou que tenha sido atribuída a ele.
+            if (analyst && !activity.adopted) {
+                const availableForUser =
+                    !activity.assignedToId ||
+                    Number(activity.assignedToId) === userId;
+
+                if (availableForUser) {
+                    buttons += `
+                        <button
+                            class="button button-adopt button-small"
+                            type="button"
+                            data-action="adopt-activity"
+                            data-activity-id="${esc(activity.id)}"
+                        >
+                            Adotar atividade
+                        </button>
+                    `;
+                } else {
+                    buttons += `
+                        <span class="assigned-label">
+                            Atribuída a outro analista
+                        </span>
+                    `;
+                }
+            }
+
+            return `
+                <tr
+                    class="activity-row"
+                    tabindex="0"
+                    role="button"
+                    aria-label="Visualizar ${esc(title)}"
+                    data-action="view-activity"
+                    data-activity-id="${esc(activity.id)}"
+                >
+                    <td class="activity-id">
+                        ${esc(identifier)}
+                    </td>
+
+                    <td>
+                        <span class="activity-name">
+                            ${esc(title)}
+                        </span>
+
+                        <span class="activity-subtitle">
+                            Clique na linha para ver os detalhes
+                        </span>
+                    </td>
+
+                    <td>${esc(city)}</td>
+
+                    <td>
+                        <span class="activity-person">
+                            ${esc(analystName)}
+                        </span>
+                    </td>
+
+                    <td>
+                        <span
+                            class="activity-duration"
+                            data-elapsed-activity-id="${esc(activity.id)}"
+                        >
+                            ${esc(time)}
+                        </span>
+                    </td>
+
+                    <td>${statusControl}</td>
+
+                    <td>
+                        <span class="${adoptionClass}">
+                            ${esc(adoptionInfo)}
+                        </span>
+                    </td>
+
+                    <td class="activity-actions-cell">
+                        <div class="activity-actions">
+                            ${buttons || '—'}
+                        </div>
+                    </td>
+                </tr>
             `;
+        }).join('');
 
-        return `
-            <tr
-                class="activity-row"
-                tabindex="0"
-                role="button"
-                aria-label="Visualizar ${esc(title)}"
-                data-action="view-activity"
-                data-activity-id="${esc(activity.id)}">
+    $('#activities-empty').hidden =
+        filtered.length > 0;
 
-                <td class="activity-id">
-                    ${esc(identifier)}
-                </td>
-
-                <td>
-                    <span class="activity-name">${esc(title)}</span>
-                    <span class="activity-subtitle">
-                        Clique na linha para ver todos os campos
-                    </span>
-                </td>
-
-                <td>${esc(city)}</td>
-                <td>${statusBadge(activity.status)}</td>
-                <td>${adoptedInfo}</td>
-                <td>${actionButton}</td>
-            </tr>
-        `;
-    }).join('');
-
-    $('#activities-empty').hidden = filtered.length > 0;
-
-    renderSummary(activities);
+    renderSummary();
 }
 
-function renderDashboard() {
-    const project = getProject();
-
-    if (!project) {
-        setView('projects');
-        return;
-    }
-
-    $('#project-eyebrow').textContent = `PROJETO ${project.shortName}`;
-    $('#dashboard-title').textContent = `Atividades — ${project.name}`;
-
-    renderSummary(getActivities());
-    renderActivityRows();
-}
+/* =========================================================
+   12. VISUALIZAÇÃO DA ATIVIDADE
+========================================================= */
 
 function renderActivityDetails(activityId) {
     const activity = currentActivity(activityId);
 
     if (!activity) {
-        toast('Atividade não encontrada neste projeto.', true);
+        toast(
+            'Atividade não encontrada. Atualize os dados.',
+            true
+        );
+
         return;
     }
-
-    const fields = Object.entries(activity.rawData || {});
 
     $('#detail-title').textContent =
         activity.title || 'Detalhes da atividade';
 
     $('#detail-subtitle').textContent =
-        `Identificador: ${activity.identifier || activity.id} · ${
-            STATUS[activity.status]?.label || activity.status
-        } · ${activity.adopted ? 'Adotada' : 'Não adotada'}`;
+        `Identificador: ${activity.identifier || activity.id} · ` +
+        `${STATUS[activity.status]?.label || activity.status} · ` +
+        `${activity.adopted ? 'Adotada' : 'Não adotada'}`;
 
     const metadata = [
-        ['Status no Oviv', STATUS[activity.status]?.label || activity.status],
+        [
+            'Status no Oviv',
+            STATUS[activity.status]?.label || activity.status
+        ],
         [
             'Adoção',
             activity.adopted
-                ? `Adotada por ${activity.adoptedBy || DEMO_USER} em ${formatDateTime(activity.adoptedAt)}`
+                ? `Adotada por ${activity.adoptedBy || 'Analista'} em ${formatDateTime(activity.adoptedAt)}`
                 : 'Ainda não adotada'
         ],
-        ['Importada em', formatDateTime(activity.createdAt)]
+        [
+            'Analista responsável',
+            activity.adopted
+                ? activity.adoptedBy || 'Analista'
+                : 'Ainda não definida'
+        ],
+        [
+            'Tempo de atividade',
+            activity.adopted
+                ? formatDuration(elapsedSeconds(activity))
+                : 'Ainda não iniciada'
+        ],
+        [
+            'Início da atividade',
+            formatDateTime(activity.startedAt || activity.adoptedAt)
+        ],
+        [
+            'Finalização',
+            formatDateTime(activity.completedAt)
+        ],
+        [
+            'Importada em',
+            formatDateTime(activity.createdAt)
+        ]
     ];
 
     const allFields = [
         ...metadata,
-        ...fields.map(([key, value]) => [key, cleanCell(value) || '—'])
+        ...Object.entries(activity.rawData || {}).map(
+            ([key, value]) => [
+                key,
+                cleanCell(value) || '—'
+            ]
+        )
     ];
 
-    $('#activity-detail-fields').innerHTML = allFields.map(([key, value]) => `
-        <div class="detail-field">
-            <strong>${esc(key)}</strong>
-            <span>${esc(value)}</span>
-        </div>
-    `).join('');
+    $('#activity-detail-fields').innerHTML =
+        allFields.map(([key, value]) => `
+            <div class="detail-field">
+                <strong>${esc(key)}</strong>
+                <span>${esc(value)}</span>
+            </div>
+        `).join('');
 
-    // Essa janela é somente para visualização.
-    // Ela não adota a atividade nem modifica seu status.
+    // Esta função apenas abre os detalhes. Não adota a atividade.
     $('#activity-detail-dialog').showModal();
 }
 
-function adoptActivity(activityId) {
+
+/* =========================================================
+   13. ADOÇÃO E INÍCIO DO CRONÔMETRO
+========================================================= */
+
+async function adoptActivity(activityId) {
     const activity = currentActivity(activityId);
 
     if (!activity) {
-        toast('Atividade não encontrada neste projeto.', true);
+        toast('Atividade não encontrada.', true);
+        return;
+    }
+
+    if (!isAnalystUser()) {
+        toast(
+            'Somente um usuário autenticado como analista pode adotar atividades.',
+            true
+        );
+
         return;
     }
 
@@ -673,58 +1208,130 @@ function adoptActivity(activityId) {
         return;
     }
 
-    const title = activity.title || activity.identifier || activity.id;
+    if (
+        activity.assignedToId &&
+        Number(activity.assignedToId) !== getLoggedUserId()
+    ) {
+        toast(
+            'Esta atividade foi atribuída a outro analista.',
+            true
+        );
 
-    if (!confirm(`Adotar a atividade "${title}" nesta demonstração?`)) {
         return;
     }
 
-    activity.adopted = true;
-    activity.adoptedBy = DEMO_USER;
-    activity.adoptedAt = new Date().toISOString();
+    if (!confirm(
+        `Adotar "${activity.title}" e iniciar o cronômetro?`
+    )) {
+        return;
+    }
 
-    logAction(
-        'Atividade adotada',
-        `${activity.identifier || activity.id} · ${activity.title || 'Atividade sem título'}`
-    );
+    try {
+        await apiRequest(
+            `/projects/${encodeURIComponent(currentProjectId)}/activities/${encodeURIComponent(activity.id)}/adopt`,
+            {
+                method: 'POST'
+            }
+        );
 
-    if (!saveState()) return;
+        toast(
+            'Atividade adotada. Cronômetro iniciado!'
+        );
 
-    renderAllCurrentProject();
-
-    toast('Atividade adotada. A ação foi adicionada ao histórico.');
-}
-
-function renderAllCurrentProject() {
-    renderProjectCards();
-
-    if (currentProjectId) {
-        renderDashboard();
-        renderHistory();
+        await refreshCurrentProject({
+            silent: true
+        });
+    } catch (error) {
+        toast(error.message, true);
     }
 }
 
-/* IMPORTAÇÃO LOCAL */
+/* =========================================================
+   14. ATUALIZAÇÃO DAS ETAPAS
+========================================================= */
+async function updateActivityStatus(
+    activityId,
+    nextStatus
+) {
+    const activity = currentActivity(activityId);
 
-function renderImportView() {
+    if (
+        !activity ||
+        !isAnalystUser() ||
+        Number(activity.adoptedById) !== getLoggedUserId()
+    ) {
+        toast(
+            'Somente o analista responsável pode atualizar esta atividade.',
+            true
+        );
+
+        await refreshCurrentProject({
+            silent: true
+        });
+
+        return;
+    }
+
+    if (!WORKFLOW_STATUSES.includes(nextStatus)) {
+        toast('Status inválido.', true);
+        return;
+    }
+
+    if (FINAL_STATUSES.has(activity.status)) {
+        toast('Esta atividade já foi finalizada.', true);
+        return;
+    }
+
+    if (activity.status === nextStatus) return;
+
+    try {
+        await apiRequest(
+            `/projects/${encodeURIComponent(currentProjectId)}/activities/${encodeURIComponent(activity.id)}/status`,
+            {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    status: nextStatus
+                })
+            }
+        );
+
+        toast(
+            `Etapa atualizada: ${STATUS[nextStatus]?.label || nextStatus}.`
+        );
+
+        await refreshCurrentProject({
+            silent: true
+        });
+    } catch (error) {
+        toast(error.message, true);
+
+        await refreshCurrentProject({
+            silent: true
+        });
+    }
+}
+/* =========================================================
+   15. IMPORTAÇÃO EXCEL/CSV
+========================================================= */
+
+function resetImportView() {
+    if (pendingImport) return;
+
     $('#import-preview').hidden = true;
     $('#import-summary').textContent = '';
     $('#import-preview-body').innerHTML = '';
     $('#confirm-import').disabled = true;
 }
 
-function resetImportView() {
-    if (!pendingImport) {
-        renderImportView();
-    }
-}
-
 function stableFingerprint(rawData) {
     const canonical = Object.keys(rawData)
         .sort((a, b) => a.localeCompare(b))
-        .map(key => `${normalizeText(key)}=${normalizeText(rawData[key])}`)
+        .map(key =>
+            `${normalizeText(key)}=${normalizeText(rawData[key])}`
+        )
         .join('|');
 
+    // Hash FNV-1a para gerar uma chave determinística da linha.
     let hash = 2166136261;
 
     for (let i = 0; i < canonical.length; i++) {
@@ -741,12 +1348,17 @@ function toSafeRawData(row) {
     for (const [key, value] of Object.entries(row)) {
         const header = String(key || '').trim();
 
-        if (!header) continue;
-        if (value === null || value === undefined || cleanCell(value) === '') {
+        if (
+            !header ||
+            value === null ||
+            value === undefined ||
+            cleanCell(value) === ''
+        ) {
             continue;
         }
 
-        result[header] = cleanCell(value).slice(0, 4000);
+        result[header] =
+            cleanCell(value).slice(0, 4000);
     }
 
     return result;
@@ -758,37 +1370,44 @@ async function prepareImport(event) {
     const file = $('#import-file').files?.[0];
 
     if (!file) {
-        toast('Selecione um arquivo Excel ou CSV.', true);
-        return;
+        return toast('Selecione um arquivo Excel ou CSV.', true);
     }
 
     if (file.size > MAX_IMPORT_BYTES) {
-        toast('O arquivo ultrapassa 20 MB, limite desta demonstração.', true);
-        return;
+        return toast(
+            'O arquivo ultrapassa 20 MB, limite desta versão.',
+            true
+        );
     }
 
     if (!window.XLSX) {
-        toast(
-            'A biblioteca Excel não foi carregada. Confira sua conexão e atualize a página.',
+        return toast(
+            'A biblioteca Excel não foi carregada. Verifique sua conexão e recarregue a página.',
             true
         );
-        return;
     }
 
-    const extension = file.name.split('.').pop().toLowerCase();
+    const extension = file.name
+        .split('.')
+        .pop()
+        .toLowerCase();
 
     if (!['xlsx', 'xls', 'csv'].includes(extension)) {
-        toast('Formato não suportado. Escolha XLSX, XLS ou CSV.', true);
-        return;
+        return toast(
+            'Formato não suportado. Escolha XLSX, XLS ou CSV.',
+            true
+        );
     }
 
     $('#import-preview').hidden = false;
-    $('#import-summary').textContent = 'Analisando o arquivo neste navegador…';
+
+    $('#import-summary').textContent =
+        'Analisando o arquivo neste navegador…';
+
     $('#import-preview-body').innerHTML = '';
     $('#confirm-import').disabled = true;
 
     try {
-        // O arquivo é lido localmente e não é enviado para o servidor.
         const workbook = window.XLSX.read(
             await file.arrayBuffer(),
             { type: 'array' }
@@ -797,31 +1416,28 @@ async function prepareImport(event) {
         const sheetName = workbook.SheetNames[0];
 
         if (!sheetName) {
-            throw new Error('Nenhuma aba foi encontrada no arquivo.');
+            throw new Error(
+                'Nenhuma aba foi encontrada no arquivo.'
+            );
         }
 
-        const worksheet = workbook.Sheets[sheetName];
-
-        const rows = window.XLSX.utils.sheet_to_json(worksheet, {
-            defval: '',
-            raw: false
-        });
+        const rows = window.XLSX.utils.sheet_to_json(
+            workbook.Sheets[sheetName],
+            {
+                defval: '',
+                raw: false
+            }
+        );
 
         if (!rows.length) {
-            throw new Error('A primeira aba não contém linhas de dados.');
+            throw new Error(
+                'A primeira aba não contém linhas de dados.'
+            );
         }
 
         const validRows = [];
-        let ignored = 0;
-        let duplicates = 0;
-
-        const existingFingerprints = new Set(
-            getActivities()
-                .map(activity => activity.rowKey)
-                .filter(Boolean)
-        );
-
         const seen = new Set();
+        let ignored = 0;
 
         for (const sourceRow of rows) {
             const rawData = toSafeRawData(sourceRow);
@@ -841,31 +1457,25 @@ async function prepareImport(event) {
 
             const rowKey = stableFingerprint(rawData);
 
-            if (existingFingerprints.has(rowKey) || seen.has(rowKey)) {
-                duplicates++;
+            if (seen.has(rowKey)) {
+                ignored++;
                 continue;
             }
 
             seen.add(rowKey);
 
             validRows.push({
-                id: newId('activity'),
                 rowKey,
-                rawData,
-                title: title || `Atividade ${identifier}`,
                 identifier: identifier || rowKey,
+                title: title || `Atividade ${identifier || rowKey}`,
                 city: findCityFromData(rawData),
-                status: 'PENDENTE',
-                adopted: false,
-                adoptedBy: null,
-                adoptedAt: null,
-                createdAt: new Date().toISOString()
+                rawData
             });
         }
 
         if (!validRows.length) {
             throw new Error(
-                'Nenhuma nova linha válida foi encontrada. Confira se há campos como ID, UNIDADE ou ATIVIDADE.'
+                'Nenhuma linha válida foi encontrada. Confira se a planilha contém colunas como ID, UNIDADE ou ATIVIDADE.'
             );
         }
 
@@ -874,23 +1484,29 @@ async function prepareImport(event) {
             rows: validRows,
             totalRows: rows.length,
             ignored,
-            duplicates,
             fileName: file.name
         };
 
         renderImportPreview();
-
     } catch (error) {
-        console.error('Falha na leitura da planilha:', error);
+        console.error(
+            'Falha na leitura da planilha:',
+            error
+        );
 
         pendingImport = null;
 
         $('#import-summary').textContent =
-            error.message || 'Não foi possível ler a planilha.';
+            error.message ||
+            'Não foi possível ler a planilha.';
 
         $('#confirm-import').disabled = true;
 
-        toast(error.message || 'Não foi possível analisar o arquivo.', true);
+        toast(
+            error.message ||
+            'Não foi possível analisar o arquivo.',
+            true
+        );
     }
 }
 
@@ -900,109 +1516,170 @@ function renderImportPreview() {
     const rows = pendingImport.rows;
 
     $('#import-preview-count').textContent =
-        `${rows.length} atividades novas`;
+        `${rows.length} atividades para enviar`;
 
     $('#import-summary').innerHTML = `
         Arquivo: <strong>${esc(pendingImport.fileName)}</strong><br>
         Linhas lidas: <strong>${pendingImport.totalRows}</strong> ·
-        Novas atividades: <strong>${rows.length}</strong> ·
-        Duplicatas ignoradas: <strong>${pendingImport.duplicates}</strong> ·
-        Linhas ignoradas: <strong>${pendingImport.ignored}</strong>.
+        Linhas válidas: <strong>${rows.length}</strong> ·
+        Linhas ignoradas/duplicadas no arquivo: <strong>${pendingImport.ignored}</strong>.
         <br>
-        Todos os campos não vazios são mantidos localmente para permitir busca
-        e visualização completa. O arquivo não é enviado a servidor algum.
+        Ao confirmar, as linhas serão enviadas à API e gravadas no PostgreSQL. Duplicatas que já existirem no banco serão ignoradas pelo servidor.
     `;
 
-    $('#import-preview-body').innerHTML = rows
-        .slice(0, 12)
-        .map(activity => `
+    $('#import-preview-body').innerHTML =
+        rows.slice(0, 12).map(activity => `
             <tr>
                 <td>${esc(activity.identifier)}</td>
                 <td>${esc(activity.title)}</td>
                 <td>${esc(activity.city || '—')}</td>
-                <td><span class="status-badge status-pending">Pendente</span></td>
+                <td>
+                    <span class="status-badge status-pending">
+                        Pendente
+                    </span>
+                </td>
             </tr>
-        `)
-        .join('');
+        `).join('');
 
     if (rows.length > 12) {
         $('#import-preview-body').insertAdjacentHTML(
             'beforeend',
-            `<tr><td colspan="4">Mais ${rows.length - 12} atividades serão importadas após a confirmação.</td></tr>`
+            `
+                <tr>
+                    <td colspan="4">
+                        Mais ${rows.length - 12} atividades serão enviadas após a confirmação.
+                    </td>
+                </tr>
+            `
         );
     }
 
     $('#confirm-import').disabled = rows.length === 0;
 }
 
-function confirmImport() {
+async function confirmImport() {
     if (
         !pendingImport ||
         pendingImport.projectId !== currentProjectId
     ) {
-        toast('Volte ao projeto correto e analise a planilha novamente.', true);
-        return;
+        return toast(
+            'Volte ao projeto correto e analise a planilha novamente.',
+            true
+        );
     }
 
-    const projectName = getProject()?.name || currentProjectId;
     const rows = pendingImport.rows;
-    const projectActivities = getActivities();
-    const oldLength = projectActivities.length;
+    const projectId = pendingImport.projectId;
 
-    projectActivities.push(...rows);
+    const payloadBytes = new Blob([
+        JSON.stringify({ activities: rows })
+    ]).size;
 
-    logAction(
-        'Planilha importada',
-        `${pendingImport.fileName}: ${rows.length} atividades adicionadas ao projeto ${projectName}; ${pendingImport.duplicates} duplicatas ignoradas e ${pendingImport.ignored} linhas ignoradas.`
-    );
+    $('#confirm-import').disabled = true;
+    $('#confirm-import').textContent = 'Enviando…';
 
-    if (!saveState()) {
-        projectActivities.splice(oldLength);
-        return;
+    try {
+        let imported = 0;
+        let duplicates = 0;
+        let invalid = 0;
+
+        // Arquivos normais vão em uma única requisição.
+        // Arquivos muito grandes são divididos em lotes.
+        const useBatches =
+            rows.length > MAX_IMPORT_ROWS_PER_REQUEST ||
+            payloadBytes > MAX_API_PAYLOAD_BYTES;
+
+        const batchSize = useBatches
+            ? 300
+            : rows.length;
+
+        for (
+            let start = 0;
+            start < rows.length;
+            start += batchSize
+        ) {
+            const batch = rows.slice(start, start + batchSize);
+
+            const result = await apiRequest(
+                `/projects/${encodeURIComponent(projectId)}/import`,
+                apiJson('POST', { activities: batch })
+            );
+
+            imported += Number(result.imported || 0);
+            duplicates += Number(result.duplicates || 0);
+            invalid += Number(result.invalid || 0);
+
+            $('#confirm-import').textContent =
+                `Enviando ${Math.min(start + batch.length, rows.length)} de ${rows.length}…`;
+        }
+
+        pendingImport = null;
+
+        $('#import-form').reset();
+        resetImportView();
+
+        await refreshCurrentProject({ silent: true });
+        setView('dashboard');
+
+        toast(
+            `Importação concluída: ${imported} adicionadas, ${duplicates} duplicatas ignoradas e ${invalid} linhas inválidas.`
+        );
+    } catch (error) {
+        console.error(
+            'Falha ao importar atividades:',
+            error
+        );
+
+        toast(
+            `A importação não foi concluída: ${error.message}`,
+            true
+        );
+    } finally {
+        $('#confirm-import').disabled = false;
+        $('#confirm-import').textContent =
+            'Confirmar importação';
     }
-
-    const inserted = rows.length;
-
-    pendingImport = null;
-
-    $('#import-form').reset();
-    renderImportView();
-
-    renderAllCurrentProject();
-    setView('dashboard');
-
-    toast(`${inserted} atividades importadas em ${projectName}.`);
 }
 
 function cancelImport() {
     pendingImport = null;
 
     $('#import-form').reset();
-    renderImportView();
+    resetImportView();
 
-    toast('Importação cancelada. Nenhuma atividade foi adicionada.');
+    toast(
+        'Importação cancelada. Nenhuma nova linha foi enviada.'
+    );
 }
 
-/* HISTÓRICO */
+
+/* =========================================================
+   16. HISTÓRICO
+========================================================= */
 
 function renderHistory() {
-    const query = normalizeText($('#history-search')?.value || '');
+    const query = normalizeText(
+        $('#history-search')?.value || ''
+    );
+
     const select = $('#history-action-filter');
     const previous = select.value;
 
-    const relevantLog = state.auditLog.filter(entry =>
-        !entry.projectId || entry.projectId === currentProjectId
+    const actions = [
+        ...new Set(
+            currentHistory.map(entry => entry.action)
+        )
+    ].sort((a, b) =>
+        a.localeCompare(b, 'pt-BR')
     );
-
-    const actions = [...new Set(
-        relevantLog.map(entry => entry.action)
-    )].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
     select.innerHTML =
         '<option value="">Todas as ações</option>' +
-        actions.map(action =>
-            `<option value="${esc(action)}">${esc(action)}</option>`
-        ).join('');
+        actions.map(action => `
+            <option value="${esc(action)}">
+                ${esc(action)}
+            </option>
+        `).join('');
 
     if (actions.includes(previous)) {
         select.value = previous;
@@ -1010,15 +1687,20 @@ function renderHistory() {
 
     const actionFilter = select.value;
 
-    const filtered = [...relevantLog]
-        .sort((a, b) => new Date(b.at) - new Date(a.at))
+    const filtered = [...currentHistory]
+        .sort((a, b) =>
+            new Date(b.at) - new Date(a.at)
+        )
         .filter(entry => {
-            if (actionFilter && entry.action !== actionFilter) {
+            if (
+                actionFilter &&
+                entry.action !== actionFilter
+            ) {
                 return false;
             }
 
             const searchable = normalizeText(
-                `${entry.action} ${entry.user} ${entry.detail}`
+                `${entry.action} ${entry.user} ${entry.detail} ${entry.identifier}`
             );
 
             return !query || searchable.includes(query);
@@ -1027,29 +1709,44 @@ function renderHistory() {
     $('#history-count').textContent =
         `${filtered.length} registros`;
 
-    $('#history-body').innerHTML = filtered.map(entry => `
-        <tr>
-            <td>${esc(isoTime(entry.at))}</td>
-            <td class="history-action">${esc(entry.action)}</td>
-            <td>${esc(entry.user || DEMO_USER)}</td>
-            <td>${esc(entry.detail)}</td>
-        </tr>
-    `).join('');
+    $('#history-body').innerHTML =
+        filtered.map(entry => `
+            <tr>
+                <td>${esc(formatDateTime(entry.at))}</td>
 
-    $('#history-empty').hidden = filtered.length > 0;
+                <td class="history-action">
+                    ${esc(entry.action)}
+                </td>
+
+                <td>${esc(entry.user)}</td>
+
+                <td class="history-detail">
+                    ${esc(entry.detail || entry.identifier || '—')}
+                </td>
+            </tr>
+        `).join('');
+
+    $('#history-empty').hidden =
+        filtered.length > 0;
 }
 
 function exportHistoryCSV() {
-    const entries = state.auditLog.filter(entry =>
-        !entry.projectId || entry.projectId === currentProjectId
-    );
-
     const rows = [
-        ['Data', 'Ação', 'Usuário', 'Detalhe'],
-        ...entries.map(entry => [
-            isoTime(entry.at),
+        [
+            'Data',
+            'Ação',
+            'Usuário',
+            'Identificador da atividade',
+            'Detalhes'
+        ],
+
+        ...currentHistory.map(entry => [
+            entry.at
+                ? new Date(entry.at).toISOString()
+                : '',
             entry.action,
             entry.user,
+            entry.identifier,
             entry.detail
         ])
     ];
@@ -1069,7 +1766,8 @@ function exportHistoryCSV() {
     const link = document.createElement('a');
 
     link.href = url;
-    link.download = `oviv-historico-${currentProjectId}.csv`;
+    link.download =
+        `oviv-historico-${currentProjectId}.csv`;
 
     document.body.appendChild(link);
     link.click();
@@ -1077,78 +1775,229 @@ function exportHistoryCSV() {
 
     URL.revokeObjectURL(url);
 
-    logAction(
-        'Histórico exportado',
-        `${entries.length} registros exportados para CSV.`
-    );
-
-    saveState();
-    renderHistory();
-
-    toast('Histórico exportado para CSV.');
+    toast('Histórico do PostgreSQL exportado para CSV.');
 }
 
-function resetDemo() {
-    if (!confirm(
-        'Restaurar todos os dados de exemplo? Isso remove os projetos importados, adoções e histórico salvos neste navegador.'
+
+/* =========================================================
+   17. NAVEGAÇÃO
+========================================================= */
+
+function setView(viewName) {
+    const valid = [
+        'projects',
+        'dashboard',
+        'import',
+        'history'
+    ];
+
+    if (!valid.includes(viewName)) {
+        viewName = 'projects';
+    }
+
+    if (
+        viewName !== 'projects' &&
+        !currentProjectId
+    ) {
+        viewName = 'projects';
+    }
+
+    currentView = viewName;
+
+    $('#view-projects').hidden =
+        viewName !== 'projects';
+
+    $('#project-workspace').hidden =
+        viewName === 'projects';
+
+    [
+        'dashboard',
+        'import',
+        'history'
+    ].forEach(name => {
+        $(`#view-${name}`).hidden =
+            name !== viewName;
+    });
+
+    $$('.project-nav [data-nav]').forEach(button => {
+        button.classList.toggle(
+            'active',
+            button.dataset.nav === viewName
+        );
+    });
+
+    if (viewName === 'dashboard') {
+        renderDashboard();
+    }
+
+    if (viewName === 'import') {
+        resetImportView();
+    }
+
+    if (viewName === 'history') {
+        renderHistory();
+    }
+
+    const project = getProject();
+
+    $('#current-project-label').hidden = !project;
+
+    $('#current-project-label').textContent =
+        project ? project.name : '';
+
+    if (location.hash !== `#${viewName}`) {
+        history.replaceState(
+            null,
+            '',
+            `#${viewName}`
+        );
+    }
+}
+
+async function selectProject(projectId) {
+    if (!currentProjects.some(
+        project => project.id === projectId
     )) {
         return;
     }
 
-    state = seedData();
-    currentProjectId = null;
-    pendingImport = null;
+    currentProjectId = projectId;
+    currentActivities = [];
+    currentHistory = [];
 
-    if (!saveState()) return;
+    setView('dashboard');
 
-    renderProjectCards();
-    setView('projects');
+    try {
+        await Promise.all([
+            loadActivities(projectId),
+            loadHistory(projectId),
+            loadProjects({ silent: true })
+        ]);
 
-    toast('Dados demonstrativos restaurados.');
+        renderDashboard();
+    } catch (error) {
+        toast(error.message, true);
+    }
 }
 
-function renderAllCurrentProject() {
-    renderProjectCards();
-    renderDashboard();
-    renderHistory();
+async function navigateTo(viewName) {
+    if (viewName === 'projects') {
+        currentProjectId = null;
+        currentActivities = [];
+        currentHistory = [];
+
+        setView('projects');
+
+        await loadProjects({ silent: true })
+            .catch(() => { });
+
+        return;
+    }
+
+    if (!currentProjectId) {
+        setView('projects');
+        return;
+    }
+
+    setView(viewName);
+
+    if (viewName === 'dashboard') {
+        await loadActivities()
+            .catch(error => toast(error.message, true));
+    }
+
+    if (viewName === 'history') {
+        await loadHistory()
+            .catch(error => toast(error.message, true));
+    }
 }
 
-/* EVENTOS DA INTERFACE */
 
-document.addEventListener('click', event => {
+/* =========================================================
+   18. EVENTOS DA INTERFACE
+========================================================= */
+
+document.addEventListener('click', async event => {
     const nav = event.target.closest('[data-nav]');
 
     if (nav) {
         event.preventDefault();
-        setView(nav.dataset.nav);
+        await navigateTo(nav.dataset.nav);
         return;
     }
 
-    const importLink = event.target.closest('[data-open-import]');
+    const openImport =
+        event.target.closest('[data-open-import]');
 
-    if (importLink) {
-        setView('import');
+    if (openImport) {
+        await navigateTo('import');
         return;
     }
 
-    const action = event.target.closest('[data-action]');
+    const action =
+        event.target.closest('[data-action]');
 
-    if (action) {
-        switch (action.dataset.action) {
-            case 'open-project':
-                selectProject(action.dataset.projectId);
-                return;
+    if (!action) return;
 
-            case 'adopt-activity':
-                event.preventDefault();
-                event.stopPropagation();
-                adoptActivity(action.dataset.activityId);
-                return;
+    switch (action.dataset.action) {
+        case 'open-project':
+            await selectProject(action.dataset.projectId);
+            return;
 
-            case 'view-activity':
-                renderActivityDetails(action.dataset.activityId);
-                return;
-        }
+        case 'reload-projects':
+            await loadProjects().catch(() => { });
+            return;
+
+        case 'adopt-activity':
+            event.stopPropagation();
+            await adoptActivity(action.dataset.activityId);
+            return;
+
+        case 'filter-in-progress':
+            $('#activity-search').value = '';
+            $('#status-filter').value = '';
+            $('#adoption-filter').value = 'in-progress';
+
+            renderActivityRows();
+
+            $('#activities-table-body')
+                .closest('.panel')
+                ?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start'
+                });
+
+            return;
+
+        case 'change-status':
+            return;
+
+        case 'view-activity':
+            renderActivityDetails(
+                action.dataset.activityId
+            );
+            return;
+        case 'assign-activity':
+            event.stopPropagation();
+
+            await openAssignDialog(
+                action.dataset.activityId
+            );
+
+            return;
+    }
+});
+
+document.addEventListener('change', async event => {
+    const statusSelect = event.target.closest(
+        'select[data-action="change-status"]'
+    );
+
+    if (statusSelect) {
+        await updateActivityStatus(
+            statusSelect.dataset.activityId,
+            statusSelect.value
+        );
     }
 });
 
@@ -1159,18 +2008,30 @@ document.addEventListener('keydown', event => {
 
     if (!row) return;
 
-    if (event.key === 'Enter' || event.key === ' ') {
-        if (event.target.closest('button')) return;
+    if (
+        event.target.closest(
+            'button, select, input, a'
+        )
+    ) {
+        return;
+    }
 
+    if (
+        event.key === 'Enter' ||
+        event.key === ' '
+    ) {
         event.preventDefault();
-        renderActivityDetails(row.dataset.activityId);
+
+        renderActivityDetails(
+            row.dataset.activityId
+        );
     }
 });
 
-$('#open-import').addEventListener(
-    'click',
-    () => setView('import')
-);
+
+/* =========================================================
+   19. CONTROLES DE BUSCA, IMPORTAÇÃO E HISTÓRICO
+========================================================= */
 
 $('#activity-search').addEventListener(
     'input',
@@ -1194,6 +2055,11 @@ $('#clear-search').addEventListener('click', () => {
 
     renderActivityRows();
 });
+
+$('#open-import').addEventListener(
+    'click',
+    () => navigateTo('import')
+);
 
 $('#import-form').addEventListener(
     'submit',
@@ -1225,34 +2091,304 @@ $('#export-history').addEventListener(
     exportHistoryCSV
 );
 
-$('#reset-demo').addEventListener(
+$('#close-detail').addEventListener(
     'click',
-    resetDemo
+    () => $('#activity-detail-dialog').close()
 );
 
-$('#close-detail').addEventListener('click', () => {
-    $('#activity-detail-dialog').close();
-});
+$('#activity-detail-dialog').addEventListener(
+    'click',
+    event => {
+        if (
+            event.target ===
+            $('#activity-detail-dialog')
+        ) {
+            $('#activity-detail-dialog').close();
+        }
+    }
+);
 
-$('#activity-detail-dialog').addEventListener('click', event => {
-    if (event.target === $('#activity-detail-dialog')) {
-        $('#activity-detail-dialog').close();
+
+/* =========================================================
+   20. ATUALIZAR DADOS
+========================================================= */
+
+// O botão antigo "Restaurar exemplos" não pode apagar nem recriar
+// dados reais do servidor. Agora ele apenas atualiza a API.
+const refreshButton = $('#reset-demo');
+
+if (refreshButton) {
+    refreshButton.textContent = 'Atualizar dados';
+
+    refreshButton.addEventListener('click', async () => {
+        if (currentProjectId) {
+            await refreshCurrentProject();
+        } else {
+            await loadProjects();
+        }
+
+        toast('Dados atualizados a partir do servidor.');
+    });
+}
+
+// Mantém o contador visual atualizado a cada segundo.
+window.setInterval(
+    updateElapsedDisplays,
+    1000
+);
+
+// Atualiza atividades e histórico a cada seis segundos.
+// Isso permite que o gestor veja alterações feitas em outro dispositivo.
+// É atualização periódica HTTP; não é WebSocket.
+window.setInterval(async () => {
+    if (!currentProjectId || document.hidden) return;
+
+    await refreshCurrentProject({ silent: true });
+}, 6000);
+
+window.addEventListener('focus', async () => {
+    if (currentProjectId) {
+        await refreshCurrentProject({ silent: true });
+    } else {
+        await loadProjects({ silent: true })
+            .catch(() => { });
     }
 });
 
-window.addEventListener('hashchange', () => {
+window.addEventListener('hashchange', async () => {
     const requested = location.hash.slice(1);
 
     if (requested === 'projects') {
-        setView('projects');
+        await navigateTo('projects');
     } else if (
         ['dashboard', 'import', 'history'].includes(requested) &&
         currentProjectId
     ) {
-        setView(requested);
+        await navigateTo(requested);
     }
 });
 
-// Inicialização: a primeira tela sempre é a seleção do projeto.
-renderProjectCards();
-setView('projects');
+
+/* =========================================================
+   INICIALIZAÇÃO COM AUTENTICAÇÃO
+========================================================= */
+
+initializeAuthentication();
+
+/* =========================================================
+   TESTADOR VISUAL DA API DE CHECK-IN
+========================================================= */
+
+const checkinTestForm = $('#checkin-test-form');
+const checkinTestResult = $('#checkin-test-result');
+const checkinTestMessage = $('#checkin-test-message');
+const checkinTestSubmit = $('#checkin-test-submit');
+const checkinTestClear = $('#checkin-test-clear');
+
+
+function showCheckinResult({
+    success,
+    httpStatus,
+    payload
+}) {
+    checkinTestResult.hidden = false;
+
+    checkinTestResult.classList.toggle(
+        'success',
+        success
+    );
+
+    checkinTestResult.classList.toggle(
+        'error',
+        !success
+    );
+
+    checkinTestMessage.textContent = success
+        ? `Check-in registrado com sucesso. HTTP ${httpStatus}.`
+        : `A operação não foi concluída. HTTP ${httpStatus}. Confira a resposta abaixo.`;
+
+    checkinTestResult.textContent = JSON.stringify(
+        {
+            httpStatus,
+            ...payload
+        },
+        null,
+        2
+    );
+}
+
+
+async function testVisitCheckIn(event) {
+    event.preventDefault();
+
+    const analystId = Number(
+        $('#checkin-analyst-id').value
+    );
+
+    const unitId = Number(
+        $('#checkin-unit-id').value
+    );
+
+    if (
+        !Number.isSafeInteger(analystId) ||
+        analystId <= 0
+    ) {
+        toast('Informe um ID de analista válido.', true);
+        return;
+    }
+
+    if (
+        !Number.isSafeInteger(unitId) ||
+        unitId <= 0
+    ) {
+        toast('Informe um ID de unidade válido.', true);
+        return;
+    }
+
+    checkinTestSubmit.disabled = true;
+    checkinTestSubmit.textContent = 'Enviando requisição…';
+
+    checkinTestResult.hidden = true;
+
+    checkinTestMessage.textContent =
+        'Enviando os dados para /api/visits/check-in…';
+
+    try {
+        const response = await fetch(
+            '/api/visits/check-in',
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+
+                credentials: 'same-origin',
+
+                body: JSON.stringify({
+                    analystId,
+                    unitId
+                })
+            }
+        );
+
+        let payload;
+
+        try {
+            payload = await response.json();
+        } catch (_) {
+            payload = {
+                message: 'O servidor não retornou um JSON válido.'
+            };
+        }
+
+        /*
+         * A rota atual pode responder HTTP 200 mesmo quando
+         * a validação dos IDs falha. Por isso, não basta
+         * conferir response.ok: também verificamos se a API
+         * devolveu o objeto visit.
+         */
+        const success =
+            response.status === 201 &&
+            Boolean(payload?.visit);
+
+        showCheckinResult({
+            success,
+            httpStatus: response.status,
+            payload
+        });
+
+        if (success) {
+            toast(
+                `Check-in registrado! ID da visita: ${payload.visit.id}.`
+            );
+        } else {
+            toast(
+                payload?.message ||
+                'Não foi possível registrar o check-in.',
+                true
+            );
+        }
+    } catch (error) {
+        showCheckinResult({
+            success: false,
+            httpStatus: 'SEM RESPOSTA',
+            payload: {
+                message:
+                    'Não foi possível acessar a API. Confirme se o servidor está funcionando.',
+                error: error.message
+            }
+        });
+
+        toast('Falha ao conectar com a API de check-in.', true);
+    } finally {
+        checkinTestSubmit.disabled = false;
+        checkinTestSubmit.textContent = 'Testar check-in';
+    }
+}
+
+
+if (checkinTestForm) {
+    checkinTestForm.addEventListener(
+        'submit',
+        testVisitCheckIn
+    );
+}
+
+
+if (checkinTestClear) {
+    checkinTestClear.addEventListener('click', () => {
+        checkinTestForm.reset();
+
+        checkinTestResult.hidden = true;
+        checkinTestResult.textContent = '';
+
+        checkinTestResult.classList.remove(
+            'success',
+            'error'
+        );
+
+        checkinTestMessage.textContent =
+            'Preencha os dois IDs e execute o teste.';
+    });
+}
+
+/* =========================================================
+   EVENTOS DE LOGIN, GESTÃO E ATRIBUIÇÃO
+========================================================= */
+
+$('#login-form').addEventListener(
+    'submit',
+    handleLogin
+);
+
+$('#logout-button').addEventListener(
+    'click',
+    handleLogout
+);
+
+$('#analyst-create-form').addEventListener(
+    'submit',
+    createAnalyst
+);
+
+$('#assign-form').addEventListener(
+    'submit',
+    submitAssignment
+);
+
+$('#assign-close').addEventListener(
+    'click',
+    () => {
+        assigningActivityId = null;
+        $('#assign-dialog').close();
+    }
+);
+
+$('#assign-cancel').addEventListener(
+    'click',
+    () => {
+        assigningActivityId = null;
+        $('#assign-dialog').close();
+    }
+);
