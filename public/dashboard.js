@@ -1,86 +1,110 @@
 'use strict';
 
 /*
- * OVIV — Dashboard integrado ao Node.js e PostgreSQL.
+ * ============================================================
+ * OVIV — MODO DEMONSTRAÇÃO ESTÁTICA
+ * ============================================================
  *
- * Login e identidade: /api/auth
- * Projetos e atividades: /api/oviv
+ * Login e autenticação estão temporariamente desativados.
+ * Nenhuma chamada é feita ao backend Node.js ou PostgreSQL.
  *
- * Não utiliza localStorage como fonte de verdade.
+ * Os dados ficam no localStorage deste navegador.
+ * Não há sincronização entre computadores ou celulares.
+ *
+ * Quando o login voltar, este arquivo será substituído pela
+ * versão integrada à API.
  */
 
-const API_BASE = '/api/oviv';
-const AUTH_BASE = '/api/auth';
-
+const STORAGE_KEY = 'oviv_static_demo_v1';
 const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
-const IMPORT_BATCH_SIZE = 100;
+const MAX_HISTORY = 1500;
 
-const PROJECT_ICONS = {
-    copasa: 'C',
-    cemig: 'E',
-    'banco-brasil': 'B'
-};
+const $ = (selector, root = document) =>
+    root.querySelector(selector);
 
-const MANAGER_ROLES = new Set([
-    'GP',
-    'GESTOR',
-    'GERENTE',
-    'GERENTE_PROJETO',
-    'GERENTE DE PROJETO',
-    'ADMIN',
-    'ADMINISTRADOR'
-]);
+const $$ = (selector, root = document) =>
+    [...root.querySelectorAll(selector)];
+
+const PROJECTS = [
+    {
+        id: 'copasa',
+        name: 'Projeto COPASA',
+        shortName: 'COPASA',
+        description:
+            'Atividades e configurações lógicas do projeto COPASA.',
+        icon: 'C'
+    },
+    {
+        id: 'cemig',
+        name: 'Projeto CEMIG',
+        shortName: 'CEMIG',
+        description:
+            'Atividades e configurações lógicas do projeto CEMIG.',
+        icon: 'E'
+    },
+    {
+        id: 'banco-brasil',
+        name: 'Projeto Banco do Brasil',
+        shortName: 'BANCO DO BRASIL',
+        description:
+            'Atividades e configurações lógicas do Banco do Brasil.',
+        icon: 'B'
+    }
+];
+
+/*
+ * Nomes fictícios apenas para testar o botão Atribuir.
+ * Não são contas de usuários reais.
+ */
+const DEMO_ANALYSTS = [
+    {
+        id: 'demo-1',
+        name: 'Ana Souza'
+    },
+    {
+        id: 'demo-2',
+        name: 'Carlos Lima'
+    },
+    {
+        id: 'demo-3',
+        name: 'Mariana Alves'
+    }
+];
+
+const DEMO_ACTOR = 'Analista demonstrativo';
 
 const STATUS = {
     PENDENTE: {
         label: 'Pendente',
         css: 'status-pending'
     },
-
     CONTATANDO_TECNICO: {
         label: 'Contatando técnico',
         css: 'status-stage'
     },
-
     INICIANDO_CONFIGURACAO: {
         label: 'Iniciando configuração',
         css: 'status-configuring'
     },
-
     FINALIZANDO_CONFIGURACAO: {
         label: 'Finalizando configuração',
         css: 'status-configuring'
     },
-
     TESTES_FINAIS: {
         label: 'Realizando testes finais',
         css: 'status-stage'
     },
-
     ATIVIDADE_MIGRADA: {
         label: 'Atividade migrada',
         css: 'status-completed'
     },
-
     IMPEDIMENTO: {
         label: 'Impedimento',
         css: 'status-blocked'
     },
-
     CANCELADA: {
         label: 'Cancelada',
         css: 'status-cancelled'
-    },
-
-    // Compatibilidade com status legados.
-    EM_CONFIGURACAO: {
-        label: 'Em configuração',
-        css: 'status-configuring'
-    },
-
-    CONCLUIDA: {
-        label: 'Concluída',
-        css: 'status-completed'
     }
 };
 
@@ -96,36 +120,29 @@ const WORKFLOW_STATUSES = [
 
 const FINAL_STATUSES = new Set([
     'ATIVIDADE_MIGRADA',
-    'CONCLUIDA',
     'CANCELADA'
 ]);
 
-const $ = (selector, root = document) =>
-    root.querySelector(selector);
-
-const $$ = (selector, root = document) =>
-    [...root.querySelectorAll(selector)];
-
-let authenticatedUser = null;
-
-let currentProjects = [];
-let currentActivities = [];
-let currentHistory = [];
-let analystsCache = [];
+let state = null;
 
 let currentProjectId = null;
 let currentView = 'projects';
-
 let pendingImport = null;
 let assigningActivityId = null;
-
 let toastTimer = null;
-let isRefreshing = false;
 
 
-/* =========================================================
+/* ============================================================
    1. UTILITÁRIOS
-========================================================= */
+============================================================ */
+
+function newId() {
+    if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+    }
+
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function esc(value) {
     return String(value ?? '').replace(
@@ -169,10 +186,10 @@ function cleanCell(value) {
 }
 
 function firstName(fullName) {
-    const normalized = String(fullName || '').trim();
+    const value = String(fullName || '').trim();
 
-    return normalized
-        ? normalized.split(/\s+/)[0]
+    return value
+        ? value.split(/\s+/)[0]
         : '—';
 }
 
@@ -181,7 +198,7 @@ function formatDateTime(value) {
 
     const date = new Date(value);
 
-    if (!Number.isFinite(date.getTime())) {
+    if (Number.isNaN(date.getTime())) {
         return '—';
     }
 
@@ -213,9 +230,7 @@ function formatDuration(totalSeconds) {
 function toast(message, isError = false) {
     const element = $('#toast');
 
-    if (!element) return;
-
-    element.textContent = String(message);
+    element.textContent = message;
 
     element.className = isError
         ? 'toast error'
@@ -229,405 +244,279 @@ function toast(message, isError = false) {
 
     toastTimer = setTimeout(() => {
         element.hidden = true;
-    }, 4500);
+    }, 3800);
 }
 
 function getProject(projectId = currentProjectId) {
-    return currentProjects.find(
+    return PROJECTS.find(
         project => project.id === projectId
     ) || null;
 }
 
+function getProjectData(projectId = currentProjectId) {
+    if (!state.projects[projectId]) {
+        state.projects[projectId] = {
+            activities: []
+        };
+    }
+
+    return state.projects[projectId];
+}
+
+function getActivities(projectId = currentProjectId) {
+    return getProjectData(projectId).activities;
+}
+
 function currentActivity(activityId) {
-    return currentActivities.find(
-        activity =>
-            String(activity.id) === String(activityId)
+    return getActivities().find(
+        activity => String(activity.id) === String(activityId)
     ) || null;
 }
 
 
-/* =========================================================
-   2. COMUNICAÇÃO COM A API
-========================================================= */
+/* ============================================================
+   2. DADOS FICTÍCIOS
+============================================================ */
 
-async function requestJson(url, options = {}) {
-    let response;
-
-    try {
-        response = await fetch(url, {
-            ...options,
-
-            credentials: 'same-origin',
-
-            headers: {
-                ...(options.body
-                    ? {
-                        'Content-Type': 'application/json'
-                    }
-                    : {}),
-
-                ...(options.headers || {})
-            }
-        });
-    } catch (error) {
-        throw new Error(
-            'Não foi possível conectar ao servidor. Confira se o npm start está em execução.'
-        );
-    }
-
-    let payload = null;
-
-    const contentType =
-        response.headers.get('content-type') || '';
-
-    if (contentType.includes('application/json')) {
-        payload = await response.json().catch(() => null);
-    } else {
-        const text = await response.text().catch(() => '');
-
-        payload = text
-            ? { message: text }
-            : null;
-    }
-
-    if (!response.ok) {
-        const error = new Error(
-            payload?.message ||
-            `Erro HTTP ${response.status}.`
-        );
-
-        error.status = response.status;
-        error.payload = payload;
-
-        throw error;
-    }
-
-    return payload;
-}
-
-function apiRequest(path, options = {}) {
-    return requestJson(
-        `${API_BASE}${path}`,
-        options
-    );
-}
-
-function authRequest(path, options = {}) {
-    return requestJson(
-        `${AUTH_BASE}${path}`,
-        options
-    );
-}
-
-function jsonBody(method, data) {
+function createDemoActivity(id, rawData, status = 'PENDENTE') {
     return {
-        method,
-        body: JSON.stringify(data)
+        id,
+        rowKey: `demo-${id}`,
+
+        rawData,
+
+        title:
+            findTitleFromData(rawData) ||
+            `Atividade ${id}`,
+
+        identifier:
+            findIdentifierFromData(rawData) ||
+            String(id),
+
+        city:
+            findCityFromData(rawData) ||
+            '',
+
+        status,
+
+        assignedToId: null,
+        assignedTo: '',
+        assignedAt: null,
+
+        adopted: false,
+        adoptedBy: '',
+        adoptedAt: null,
+        startedAt: null,
+        completedAt: null,
+
+        createdAt: new Date().toISOString()
+    };
+}
+
+function createSeedState() {
+    return {
+        version: 1,
+
+        projects: {
+            copasa: {
+                activities: [
+                    createDemoActivity(
+                        'demo-copasa-1',
+                        {
+                            ID: 'DEMO-2263651',
+                            UNIDADE:
+                                'Unidade fictícia COPASA Centro',
+                            MUNICIPIO: 'Montes Claros',
+                            'ID VGR': 'VGR-DEMO-01',
+                            PRODUTO: 'CONFIGURAÇÃO LÓGICA'
+                        }
+                    ),
+
+                    createDemoActivity(
+                        'demo-copasa-2',
+                        {
+                            ID: 'DEMO-2263652',
+                            UNIDADE:
+                                'Unidade fictícia COPASA Norte',
+                            MUNICIPIO: 'Montes Claros',
+                            'ID VGR': 'VGR-DEMO-02',
+                            PRODUTO: 'CONFIGURAÇÃO LÓGICA'
+                        }
+                    ),
+
+                    createDemoActivity(
+                        'demo-copasa-3',
+                        {
+                            ID: 'DEMO-2263653',
+                            UNIDADE:
+                                'Unidade fictícia COPASA Sul',
+                            MUNICIPIO: 'Belo Horizonte',
+                            'ID VGR': 'VGR-DEMO-03',
+                            PRODUTO: 'CONFIGURAÇÃO LÓGICA'
+                        }
+                    )
+                ]
+            },
+
+            cemig: {
+                activities: [
+                    createDemoActivity(
+                        'demo-cemig-1',
+                        {
+                            ID: 'DEMO-CEMIG-001',
+                            UNIDADE:
+                                'Unidade fictícia CEMIG Centro',
+                            MUNICIPIO: 'Belo Horizonte',
+                            PRODUTO: 'CONFIGURAÇÃO LÓGICA'
+                        }
+                    ),
+
+                    createDemoActivity(
+                        'demo-cemig-2',
+                        {
+                            ID: 'DEMO-CEMIG-002',
+                            UNIDADE:
+                                'Unidade fictícia CEMIG Norte',
+                            MUNICIPIO: 'Montes Claros',
+                            PRODUTO: 'CONFIGURAÇÃO LÓGICA'
+                        }
+                    )
+                ]
+            },
+
+            'banco-brasil': {
+                activities: [
+                    createDemoActivity(
+                        'demo-bb-1',
+                        {
+                            ID: 'DEMO-BB-001',
+                            UNIDADE:
+                                'Unidade fictícia Banco do Brasil 01',
+                            MUNICIPIO: 'Brasília',
+                            PRODUTO: 'CONFIGURAÇÃO LÓGICA'
+                        }
+                    ),
+
+                    createDemoActivity(
+                        'demo-bb-2',
+                        {
+                            ID: 'DEMO-BB-002',
+                            UNIDADE:
+                                'Unidade fictícia Banco do Brasil 02',
+                            MUNICIPIO: 'São Paulo',
+                            PRODUTO: 'CONFIGURAÇÃO LÓGICA'
+                        }
+                    )
+                ]
+            }
+        },
+
+        auditLog: []
     };
 }
 
 
-/* =========================================================
-   3. AUTENTICAÇÃO E PERFIS
-========================================================= */
+/* ============================================================
+   3. ARMAZENAMENTO LOCAL DA DEMONSTRAÇÃO
+============================================================ */
 
-function normalizeRole(role) {
-    return String(role || '')
-        .trim()
-        .toUpperCase();
-}
-
-function isManagerUser() {
-    return MANAGER_ROLES.has(
-        normalizeRole(authenticatedUser?.role)
-    );
-}
-
-function isAnalystUser() {
-    return (
-        normalizeRole(authenticatedUser?.role) ===
-        'ANALISTA'
-    );
-}
-
-function getLoggedUserId() {
-    const id = Number(authenticatedUser?.id);
-
-    return Number.isSafeInteger(id) && id > 0
-        ? id
-        : null;
-}
-
-function getLoggedUserName() {
-    return authenticatedUser?.name || '';
-}
-
-function ensureUserLabel() {
-    const container = $('.topbar-right');
-
-    if (!container) return;
-
-    if ($('#current-user-label')) return;
-
-    const label = document.createElement('span');
-
-    label.id = 'current-user-label';
-    label.className = 'current-project-label';
-    label.textContent = '';
-
-    const badge = $('.demo-badge', container);
-
-    if (badge) {
-        container.insertBefore(label, badge);
-    } else {
-        container.prepend(label);
-    }
-}
-
-function refreshUserLabel() {
-    ensureUserLabel();
-
-    const label = $('#current-user-label');
-
-    if (!label) return;
-
-    label.textContent = authenticatedUser
-        ? `${authenticatedUser.name} · ${authenticatedUser.role}`
-        : '';
-}
-
-function showAuthenticatedShell(isAuthenticated) {
-    $('#auth-screen').hidden = isAuthenticated;
-
-    const topbar = $('.topbar');
-    const notice = $('.demo-notice');
-    const shell = $('.app-shell');
-
-    if (topbar) {
-        topbar.hidden = !isAuthenticated;
-    }
-
-    if (notice) {
-        notice.hidden = !isAuthenticated;
-    }
-
-    if (shell) {
-        shell.hidden = !isAuthenticated;
-    }
-}
-
-function setBackendNotice(connected, message = '') {
-    const badge = $('.demo-badge');
-    const notice = $('.demo-notice');
-
-    if (badge) {
-        badge.textContent = connected
-            ? 'API + POSTGRESQL'
-            : 'API DESCONECTADA';
-    }
-
-    if (notice) {
-        notice.textContent = connected
-            ? 'Conexão com o PostgreSQL estabelecida. Permissões de gestor e analista são verificadas pelo servidor.'
-            : `Falha de conexão: ${message || 'verifique se o servidor está funcionando.'}`;
-    }
-
-    const importSubtitle =
-        $('#view-import .page-heading .subtitle');
-
-    if (importSubtitle) {
-        importSubtitle.textContent =
-            'A planilha é processada no navegador e as linhas selecionadas são enviadas à API para armazenamento no PostgreSQL.';
-    }
-
-    const privacyNote =
-        $('#view-import .privacy-note');
-
-    if (privacyNote) {
-        privacyNote.textContent =
-            'Os valores extraídos das linhas importadas serão armazenados no PostgreSQL. O arquivo Excel original não é enviado como arquivo. Importe somente dados que você tem autorização para utilizar.';
-    }
-
-    const warningNote =
-        $('#view-import .warning-note');
-
-    if (warningNote) {
-        warningNote.textContent =
-            'Confira o projeto e a prévia antes de confirmar. As atividades importadas ficam disponíveis no servidor para os usuários autorizados.';
-    }
-
-    const historyWarning = $('.history-warning');
-
-    if (historyWarning) {
-        historyWarning.textContent =
-            'O histórico é carregado do PostgreSQL e compartilhado entre os usuários autorizados do sistema.';
-    }
-
-    const importEyebrow =
-        $('#view-import .eyebrow');
-
-    if (importEyebrow) {
-        importEyebrow.textContent =
-            'IMPORTAÇÃO PARA O SERVIDOR';
-    }
-}
-
-function updateRoleVisibility() {
-    const manager = isManagerUser();
-
-    const managerPanel = $('#manager-panel');
-    const importButton = $('#open-import');
-
-    if (managerPanel) {
-        managerPanel.hidden = !manager;
-    }
-
-    if (importButton) {
-        importButton.hidden = !manager;
-    }
-
-    refreshUserLabel();
-}
-
-async function handleLogin(event) {
-    event.preventDefault();
-
-    const button = $('#login-submit');
-    const message = $('#login-message');
-
-    const email = $('#login-email').value.trim();
-    const password = $('#login-password').value;
-
-    message.textContent = '';
-
-    button.disabled = true;
-    button.textContent = 'Entrando…';
-
+function loadState() {
     try {
-        const result = await authRequest(
-            '/login',
-            jsonBody('POST', {
-                email,
-                password
-            })
-        );
+        const saved = localStorage.getItem(STORAGE_KEY);
 
-        authenticatedUser = result.user;
+        if (saved) {
+            const parsed = JSON.parse(saved);
 
-        $('#login-password').value = '';
+            if (
+                parsed &&
+                parsed.projects &&
+                Array.isArray(parsed.auditLog)
+            ) {
+                for (const project of PROJECTS) {
+                    if (!parsed.projects[project.id]) {
+                        parsed.projects[project.id] = {
+                            activities: []
+                        };
+                    }
 
-        await onAuthenticated();
-    } catch (error) {
-        message.textContent = error.message;
-    } finally {
-        button.disabled = false;
-        button.textContent = 'Entrar';
-    }
-}
+                    if (
+                        !Array.isArray(
+                            parsed.projects[project.id].activities
+                        )
+                    ) {
+                        parsed.projects[project.id].activities = [];
+                    }
+                }
 
-async function handleLogout() {
-    try {
-        await authRequest(
-            '/logout',
-            {
-                method: 'POST'
+                return parsed;
             }
+        }
+    } catch (error) {
+        console.error(
+            'Erro ao carregar a demonstração:',
+            error
+        );
+    }
+
+    const initial = createSeedState();
+
+    try {
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify(initial)
         );
     } catch (error) {
         console.error(
-            'Erro ao encerrar a sessão:',
-            error.message
+            'Não foi possível salvar a demonstração:',
+            error
         );
     }
 
-    authenticatedUser = null;
-
-    currentProjects = [];
-    currentActivities = [];
-    currentHistory = [];
-    analystsCache = [];
-
-    currentProjectId = null;
-    pendingImport = null;
-    assigningActivityId = null;
-
-    $('#manager-panel').hidden = true;
-
-    showAuthenticatedShell(false);
-
-    $('#login-form').reset();
-
-    $('#login-message').textContent =
-        'Sessão encerrada. Entre novamente para continuar.';
-
-    $('#login-email').focus();
+    return initial;
 }
 
-async function initializeAuthentication() {
-    ensureUserLabel();
-
-    showAuthenticatedShell(false);
-
+function saveState() {
     try {
-        const result = await authRequest('/me');
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify(state)
+        );
 
-        if (!result?.user) {
-            throw new Error(
-                'O servidor não retornou o usuário autenticado.'
-            );
-        }
-
-        authenticatedUser = result.user;
-
-        await onAuthenticated();
+        return true;
     } catch (error) {
-        if (error.status === 401) {
-            $('#login-email').focus();
-            return;
-        }
-
-        $('#login-message').textContent =
-            'Não foi possível verificar a sessão. Confira se a API de autenticação está registrada no servidor.';
-
         console.error(
-            'Falha ao verificar a sessão:',
-            error.message
+            'Falha no armazenamento local:',
+            error
         );
+
+        toast(
+            'O navegador não conseguiu salvar. O armazenamento pode estar cheio.',
+            true
+        );
+
+        return false;
     }
 }
 
-async function onAuthenticated() {
-    if (!authenticatedUser) {
-        showAuthenticatedShell(false);
-        return;
-    }
+function logAction(action, detail) {
+    state.auditLog.unshift({
+        id: newId(),
+        projectId: currentProjectId,
+        at: new Date().toISOString(),
+        action,
+        user: DEMO_ACTOR,
+        detail
+    });
 
-    showAuthenticatedShell(true);
-
-    refreshUserLabel();
-    updateRoleVisibility();
-
-    currentProjectId = null;
-    currentActivities = [];
-    currentHistory = [];
-
-    setView('projects');
-
-    try {
-        await loadProjects();
-
-        if (isManagerUser()) {
-            await loadAnalysts();
-        }
-    } catch (error) {
-        toast(error.message, true);
+    if (state.auditLog.length > MAX_HISTORY) {
+        state.auditLog.length = MAX_HISTORY;
     }
 }
 
 
-/* =========================================================
-   4. LEITURA DOS DADOS DE ATIVIDADE
-========================================================= */
+/* ============================================================
+   4. DADOS DA PLANILHA
+============================================================ */
 
 function getFieldValue(rawData, aliases) {
     for (const [key, value] of Object.entries(rawData || {})) {
@@ -637,7 +526,9 @@ function getFieldValue(rawData, aliases) {
 
         const cleaned = cleanCell(value);
 
-        if (cleaned) return cleaned;
+        if (cleaned) {
+            return cleaned;
+        }
     }
 
     return '';
@@ -676,301 +567,56 @@ function findCityFromData(rawData) {
     ]);
 }
 
-function normalizeProject(row) {
-    return {
-        id: String(row.id),
-        name: row.name || row.id,
-        description: row.description || '',
-
-        icon:
-            PROJECT_ICONS[row.id] ||
-            String(row.name || 'O').slice(0, 1),
-
-        total: Number(row.total || 0),
-        pending: Number(row.pending || 0),
-        adopted: Number(row.adopted || 0),
-        inProgress: Number(row.in_progress || 0),
-        completed: Number(row.completed || 0),
-        blocked: Number(row.blocked || 0)
-    };
-}
-
-function normalizeActivity(row) {
-    const rawData =
-        row.source_row &&
-        typeof row.source_row === 'object'
-            ? row.source_row
-            : {};
-
-    return {
-        id: Number(row.id),
-        projectId: String(row.project_id),
-        rowKey: row.row_key || '',
-
-        identifier:
-            row.identifier ||
-            findIdentifierFromData(rawData) ||
-            String(row.id),
-
-        title:
-            row.title ||
-            findTitleFromData(rawData) ||
-            'Atividade sem título',
-
-        city:
-            row.city ||
-            findCityFromData(rawData) ||
-            '',
-
-        rawData,
-
-        status: row.status || 'PENDENTE',
-
-        assignedToId:
-            row.assigned_to_user_id == null
-                ? null
-                : Number(row.assigned_to_user_id),
-
-        assignedTo:
-            row.assigned_to_name || '',
-
-        assignedById:
-            row.assigned_by_user_id == null
-                ? null
-                : Number(row.assigned_by_user_id),
-
-        assignedAt: row.assigned_at || null,
-
-        adoptedById:
-            row.adopted_by_user_id == null
-                ? null
-                : Number(row.adopted_by_user_id),
-
-        adoptedBy:
-            row.analyst_name ||
-            row.adopted_by_name ||
-            '',
-
-        adopted: row.adopted_by_user_id != null,
-
-        adoptedAt: row.adopted_at || null,
-        startedAt: row.started_at || null,
-        completedAt: row.completed_at || null,
-        createdAt: row.created_at || null,
-        updatedAt: row.updated_at || null
-    };
-}
-
-function normalizeHistory(row) {
-    return {
-        id: row.id,
-        projectId: row.project_id,
-        activityId: row.activity_id,
-        identifier: row.activity_identifier || '',
-        at: row.created_at,
-        action: row.action || 'Ação',
-        user: row.user_name || 'Sistema',
-        previousStatus: row.previous_status || '',
-        newStatus: row.new_status || '',
-        detail: row.details || ''
-    };
-}
-
-
-/* =========================================================
-   5. CARREGAR PROJETOS, ATIVIDADES E HISTÓRICO
-========================================================= */
-
-async function loadProjects() {
-    try {
-        const result = await apiRequest('/projects');
-
-        currentProjects = (result.projects || [])
-            .map(normalizeProject);
-
-        setBackendNotice(true);
-
-        renderProjectCards();
-
-        if (
-            currentProjectId &&
-            !currentProjects.some(
-                project => project.id === currentProjectId
-            )
-        ) {
-            currentProjectId = null;
-            setView('projects');
-        }
-
-        return currentProjects;
-    } catch (error) {
-        setBackendNotice(false, error.message);
-        throw error;
-    }
-}
-
-async function loadActivities(projectId = currentProjectId) {
-    if (!projectId) {
-        currentActivities = [];
-        renderActivityRows();
-        return [];
-    }
-
-    const result = await apiRequest(
-        `/projects/${encodeURIComponent(projectId)}/activities`
-    );
-
-    currentActivities = (result.activities || [])
-        .map(normalizeActivity);
-
-    renderSummary();
-    renderActivityRows();
-
-    return currentActivities;
-}
-
-async function loadHistory(projectId = currentProjectId) {
-    if (!projectId) {
-        currentHistory = [];
-        renderHistory();
-        return [];
-    }
-
-    const result = await apiRequest(
-        `/projects/${encodeURIComponent(projectId)}/history?limit=1000`
-    );
-
-    currentHistory = (result.history || [])
-        .map(normalizeHistory);
-
-    renderHistory();
-
-    return currentHistory;
-}
-
-async function refreshCurrentProject({ silent = false } = {}) {
-    if (
-        !authenticatedUser ||
-        !currentProjectId ||
-        isRefreshing
-    ) {
-        return;
-    }
-
-    if (
-        document.activeElement?.matches(
-            'select[data-action="change-status"]'
+function stableFingerprint(rawData) {
+    const canonical = Object.keys(rawData)
+        .sort((a, b) => a.localeCompare(b))
+        .map(key =>
+            `${normalizeText(key)}=${normalizeText(rawData[key])}`
         )
-    ) {
-        return;
+        .join('|');
+
+    let hash = 2166136261;
+
+    for (let index = 0; index < canonical.length; index++) {
+        hash ^= canonical.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
     }
 
-    isRefreshing = true;
+    return `row-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
 
-    try {
-        await Promise.all([
-            loadActivities(currentProjectId),
-            loadHistory(currentProjectId),
-            loadProjects()
-        ]);
+function toSafeRawData(row) {
+    const result = {};
 
-        if (currentView === 'dashboard') {
-            renderDashboard();
-        }
-    } catch (error) {
-        if (!silent) {
-            toast(error.message, true);
+    for (const [key, value] of Object.entries(row)) {
+        const header = String(key || '').trim();
+        const cell = cleanCell(value);
+
+        if (!header || !cell) {
+            continue;
         }
 
-        console.error(
-            'Falha ao atualizar as atividades:',
-            error.message
-        );
-    } finally {
-        isRefreshing = false;
+        result[header] = cell.slice(0, 4000);
     }
+
+    return result;
 }
 
 
-/* =========================================================
-   6. CARTÕES DE PROJETOS
-========================================================= */
-
-function renderProjectCards() {
-    const container = $('#project-cards');
-
-    if (!container) return;
-
-    if (!currentProjects.length) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <strong>Nenhum projeto encontrado</strong>
-                <p>Verifique a tabela oviv_projects no PostgreSQL.</p>
-                <button
-                    class="button button-primary"
-                    type="button"
-                    data-action="reload-projects"
-                >
-                    Atualizar projetos
-                </button>
-            </div>
-        `;
-
-        return;
-    }
-
-    container.innerHTML = currentProjects.map(project => `
-        <article class="project-card">
-            <div class="project-card-top">
-                <span class="project-icon">
-                    ${esc(project.icon)}
-                </span>
-
-                <span class="project-count">
-                    ${project.total} atividades
-                </span>
-            </div>
-
-            <h2>${esc(project.name)}</h2>
-            <p>${esc(project.description)}</p>
-
-            <span class="project-card-meta">
-                ${project.adopted} adotadas ·
-                ${project.inProgress} em andamento
-            </span>
-
-            <button
-                class="button button-primary"
-                type="button"
-                data-action="open-project"
-                data-project-id="${esc(project.id)}"
-            >
-                Entrar no projeto →
-            </button>
-        </article>
-    `).join('');
-}
-
-
-/* =========================================================
-   7. NAVEGAÇÃO
-========================================================= */
+/* ============================================================
+   5. NAVEGAÇÃO
+============================================================ */
 
 function setView(viewName) {
-    const validViews = [
+    const allowed = [
         'projects',
         'dashboard',
         'import',
         'history'
     ];
 
-    if (!validViews.includes(viewName)) {
+    if (!allowed.includes(viewName)) {
         viewName = 'projects';
-    }
-
-    if (!authenticatedUser) {
-        showAuthenticatedShell(false);
-        return;
     }
 
     if (
@@ -980,16 +626,8 @@ function setView(viewName) {
         viewName = 'projects';
     }
 
-    if (
-        viewName === 'import' &&
-        !isManagerUser()
-    ) {
-        toast(
-            'A importação de planilhas é exclusiva do gestor.',
-            true
-        );
-
-        viewName = 'dashboard';
+    if (viewName === 'projects') {
+        currentProjectId = null;
     }
 
     currentView = viewName;
@@ -1016,6 +654,15 @@ function setView(viewName) {
         );
     });
 
+    const project = getProject();
+
+    const projectLabel = $('#current-project-label');
+
+    projectLabel.hidden = !project;
+
+    projectLabel.textContent =
+        project ? project.name : '';
+
     if (viewName === 'dashboard') {
         renderDashboard();
     }
@@ -1028,120 +675,109 @@ function setView(viewName) {
         renderHistory();
     }
 
-    const project = getProject();
+    const hash = viewName === 'projects'
+        ? '#projects'
+        : `#${viewName}`;
 
-    const label = $('#current-project-label');
-
-    if (label) {
-        label.hidden = !project;
-        label.textContent = project
-            ? project.name
-            : '';
-    }
-
-    if (location.hash !== `#${viewName}`) {
-        history.replaceState(
-            null,
-            '',
-            `#${viewName}`
-        );
+    if (location.hash !== hash) {
+        history.replaceState(null, '', hash);
     }
 }
 
-async function navigateTo(viewName) {
-    if (!authenticatedUser) {
-        showAuthenticatedShell(false);
-        return;
-    }
-
-    if (viewName === 'projects') {
-        currentProjectId = null;
-
-        currentActivities = [];
-        currentHistory = [];
-
-        setView('projects');
-
-        await loadProjects().catch(error => {
-            toast(error.message, true);
-        });
-
-        return;
-    }
-
-    if (!currentProjectId) {
-        setView('projects');
-        return;
-    }
-
-    setView(viewName);
-
-    if (viewName === 'dashboard') {
-        await loadActivities().catch(error => {
-            toast(error.message, true);
-        });
-    }
-
-    if (viewName === 'history') {
-        await loadHistory().catch(error => {
-            toast(error.message, true);
-        });
-    }
-}
-
-async function selectProject(projectId) {
-    if (!currentProjects.some(
-        project => project.id === projectId
-    )) {
+function selectProject(projectId) {
+    if (!getProject(projectId)) {
         return;
     }
 
     currentProjectId = projectId;
 
-    currentActivities = [];
-    currentHistory = [];
-
     setView('dashboard');
-
-    try {
-        await Promise.all([
-            loadActivities(projectId),
-            loadHistory(projectId)
-        ]);
-
-        renderDashboard();
-    } catch (error) {
-        toast(error.message, true);
-    }
 }
 
 
-/* =========================================================
-   8. CRONÔMETRO E INDICADORES
-========================================================= */
+/* ============================================================
+   6. CARTÕES DOS PROJETOS
+============================================================ */
+
+function renderProjectCards() {
+    const container = $('#project-cards');
+
+    container.innerHTML = PROJECTS.map(project => {
+        const activities = getActivities(project.id);
+
+        const adopted = activities.filter(
+            activity => activity.adopted
+        ).length;
+
+        const active = activities.filter(
+            isInProgress
+        ).length;
+
+        return `
+            <article class="project-card">
+                <div class="project-card-top">
+                    <span class="project-icon">
+                        ${esc(project.icon)}
+                    </span>
+
+                    <span class="project-count">
+                        ${activities.length} atividades
+                    </span>
+                </div>
+
+                <h2>${esc(project.name)}</h2>
+
+                <p>${esc(project.description)}</p>
+
+                <span class="project-card-meta">
+                    ${adopted} adotadas · ${active} em andamento
+                </span>
+
+                <button
+                    class="button button-primary"
+                    type="button"
+                    data-action="open-project"
+                    data-project-id="${esc(project.id)}"
+                >
+                    Entrar no projeto →
+                </button>
+            </article>
+        `;
+    }).join('');
+}
+
+
+/* ============================================================
+   7. CRONÔMETRO
+============================================================ */
 
 function elapsedSeconds(activity) {
     const startValue =
         activity.startedAt ||
         activity.adoptedAt;
 
-    if (!startValue) return 0;
+    if (!startValue) {
+        return 0;
+    }
 
     const start = new Date(startValue).getTime();
 
-    if (!Number.isFinite(start)) return 0;
+    if (!Number.isFinite(start)) {
+        return 0;
+    }
 
-    const endValue =
-        FINAL_STATUSES.has(activity.status) &&
-        activity.completedAt
+    const finalValue =
+        FINAL_STATUSES.has(activity.status)
             ? activity.completedAt
             : null;
 
-    const end = endValue
-        ? new Date(endValue).getTime()
+    const end = finalValue
+        ? new Date(finalValue).getTime()
         : Date.now();
 
-    if (!Number.isFinite(end)) return 0;
+    if (!Number.isFinite(end)) {
+        return 0;
+    }
 
     return Math.max(
         0,
@@ -1150,15 +786,50 @@ function elapsedSeconds(activity) {
 }
 
 function isInProgress(activity) {
-    return Boolean(activity.adopted) &&
+    return (
+        activity.adopted &&
         Boolean(activity.startedAt) &&
-        !FINAL_STATUSES.has(activity.status);
+        !FINAL_STATUSES.has(activity.status)
+    );
 }
 
-function renderSummary() {
-    const activities = currentActivities;
+function updateElapsedDisplays() {
+    $$('[data-elapsed-activity-id]').forEach(element => {
+        const activity = currentActivity(
+            element.dataset.elapsedActivityId
+        );
 
-    const active = activities.filter(isInProgress);
+        if (activity?.adopted) {
+            element.textContent =
+                formatDuration(elapsedSeconds(activity));
+        }
+    });
+
+    if (currentProjectId) {
+        const seconds = getActivities()
+            .filter(isInProgress)
+            .reduce(
+                (sum, activity) =>
+                    sum + elapsedSeconds(activity),
+                0
+            );
+
+        $('#kpi-active-time').textContent =
+            `Tempo acumulado: ${formatDuration(seconds)}`;
+    }
+}
+
+
+/* ============================================================
+   8. RESUMO DOS TOTAIS
+============================================================ */
+
+function renderSummary() {
+    const activities = getActivities();
+
+    const active = activities.filter(
+        isInProgress
+    );
 
     $('#kpi-total').textContent =
         activities.length;
@@ -1179,10 +850,7 @@ function renderSummary() {
 
     $('#kpi-completed').textContent =
         activities.filter(activity =>
-            [
-                'ATIVIDADE_MIGRADA',
-                'CONCLUIDA'
-            ].includes(activity.status)
+            activity.status === 'ATIVIDADE_MIGRADA'
         ).length;
 
     $('#kpi-blocked').textContent =
@@ -1190,64 +858,23 @@ function renderSummary() {
             activity.status === 'IMPEDIMENTO'
         ).length;
 
-    const accumulatedSeconds = active.reduce(
+    const seconds = active.reduce(
         (sum, activity) =>
             sum + elapsedSeconds(activity),
         0
     );
 
     $('#kpi-active-time').textContent =
-        `Tempo acumulado: ${formatDuration(accumulatedSeconds)}`;
-}
-
-function updateElapsedDisplays() {
-    $$('[data-elapsed-activity-id]').forEach(element => {
-        const activity = currentActivity(
-            element.dataset.elapsedActivityId
-        );
-
-        if (activity?.adopted) {
-            element.textContent = formatDuration(
-                elapsedSeconds(activity)
-            );
-        }
-    });
-
-    if (currentProjectId) {
-        const activeSeconds = currentActivities
-            .filter(isInProgress)
-            .reduce(
-                (sum, activity) =>
-                    sum + elapsedSeconds(activity),
-                0
-            );
-
-        const element = $('#kpi-active-time');
-
-        if (element) {
-            element.textContent =
-                `Tempo acumulado: ${formatDuration(activeSeconds)}`;
-        }
-    }
-}
-
-function statusBadge(status) {
-    const info = STATUS[status] || STATUS.PENDENTE;
-
-    return `
-        <span class="status-badge ${info.css}">
-            ${esc(info.label)}
-        </span>
-    `;
+        `Tempo acumulado: ${formatDuration(seconds)}`;
 }
 
 
-/* =========================================================
-   9. PESQUISA EM TODOS OS CAMPOS
-========================================================= */
+/* ============================================================
+   9. PESQUISA
+============================================================ */
 
 function searchableText(activity) {
-    const sourceText = Object.entries(
+    const rawFields = Object.entries(
         activity.rawData || {}
     )
         .map(([key, value]) =>
@@ -1264,32 +891,36 @@ function searchableText(activity) {
         STATUS[activity.status]?.label,
         activity.assignedTo,
         activity.adoptedBy,
-        sourceText
+        rawFields
     ].join(' '));
 }
 
+function statusBadge(status) {
+    const info = STATUS[status] || STATUS.PENDENTE;
 
-/* =========================================================
+    return `
+        <span class="status-badge ${info.css}">
+            ${esc(info.label)}
+        </span>
+    `;
+}
+
+
+/* ============================================================
    10. TABELA DE ATIVIDADES
-========================================================= */
+============================================================ */
 
 function renderActivityRows() {
+    const activities = getActivities();
+
     const query = normalizeText(
         $('#activity-search').value
     );
 
-    const statusFilter =
-        $('#status-filter').value;
+    const statusFilter = $('#status-filter').value;
+    const adoptionFilter = $('#adoption-filter').value;
 
-    const adoptionFilter =
-        $('#adoption-filter').value;
-
-    const userId = getLoggedUserId();
-
-    const manager = isManagerUser();
-    const analyst = isAnalystUser();
-
-    const filtered = currentActivities.filter(activity => {
+    const filtered = activities.filter(activity => {
         if (
             query &&
             !searchableText(activity).includes(query)
@@ -1329,7 +960,7 @@ function renderActivityRows() {
     });
 
     $('#results-count').textContent =
-        `${filtered.length} de ${currentActivities.length} atividades`;
+        `${filtered.length} de ${activities.length} atividades`;
 
     $('#activities-table-body').innerHTML =
         filtered.map(activity => {
@@ -1346,44 +977,34 @@ function renderActivityRows() {
                 '—';
 
             const responsible =
-                activity.adopted
-                    ? activity.adoptedBy
-                    : activity.assignedTo;
+                activity.adoptedBy ||
+                activity.assignedTo ||
+                '';
 
             const analystName = responsible
                 ? firstName(responsible)
                 : '—';
 
-            const time = activity.adopted
+            const elapsed = activity.adopted
                 ? formatDuration(elapsedSeconds(activity))
                 : '—';
 
-            let adoptionText = 'Disponível';
+            const adoptionText = activity.adopted
+                ? `Adotada por ${activity.adoptedBy}`
+                : activity.assignedTo
+                    ? `Atribuída a ${activity.assignedTo}`
+                    : 'Disponível';
 
-            if (activity.adopted) {
-                adoptionText =
-                    `Adotada por ${activity.adoptedBy || 'Analista'}`;
-            } else if (activity.assignedTo) {
-                adoptionText =
-                    `Atribuída a ${activity.assignedTo}`;
-            }
+            let statusControl;
 
-            const adoptionClass =
-                activity.adopted || activity.assignedTo
-                    ? 'adoption-label adopted'
-                    : 'adoption-label';
-
-            const canChangeStatus =
-                analyst &&
+            if (
                 activity.adopted &&
-                Number(activity.adoptedById) === userId &&
-                !FINAL_STATUSES.has(activity.status);
-
-            const statusControl = canChangeStatus
-                ? `
+                !FINAL_STATUSES.has(activity.status)
+            ) {
+                statusControl = `
                     <select
                         class="status-select"
-                        aria-label="Atualizar etapa da atividade ${esc(identifier)}"
+                        aria-label="Atualizar etapa de ${esc(identifier)}"
                         data-action="change-status"
                         data-activity-id="${esc(activity.id)}"
                     >
@@ -1396,13 +1017,15 @@ function renderActivityRows() {
                             </option>
                         `).join('')}
                     </select>
-                `
-                : statusBadge(activity.status);
+                `;
+            } else {
+                statusControl = statusBadge(activity.status);
+            }
 
-            let actionButtons = '';
+            let actions = '';
 
-            if (manager && !activity.adopted) {
-                actionButtons += `
+            if (!activity.adopted) {
+                actions += `
                     <button
                         class="button button-assign button-small"
                         type="button"
@@ -1413,36 +1036,18 @@ function renderActivityRows() {
                             ? 'Atribuir novamente'
                             : 'Atribuir'}
                     </button>
+
+                    <button
+                        class="button button-adopt button-small"
+                        type="button"
+                        data-action="adopt-activity"
+                        data-activity-id="${esc(activity.id)}"
+                    >
+                        Adotar atividade
+                    </button>
                 `;
-            }
-
-            if (analyst && !activity.adopted) {
-                const canAdopt =
-                    !activity.assignedToId ||
-                    activity.assignedToId === userId;
-
-                if (canAdopt) {
-                    actionButtons += `
-                        <button
-                            class="button button-adopt button-small"
-                            type="button"
-                            data-action="adopt-activity"
-                            data-activity-id="${esc(activity.id)}"
-                        >
-                            Adotar atividade
-                        </button>
-                    `;
-                } else {
-                    actionButtons += `
-                        <span class="assigned-label">
-                            Atribuída a outro analista
-                        </span>
-                    `;
-                }
-            }
-
-            if (activity.adopted) {
-                actionButtons += `
+            } else {
+                actions = `
                     <span class="assigned-label">
                         Já adotada
                     </span>
@@ -1468,7 +1073,7 @@ function renderActivityRows() {
                         </span>
 
                         <span class="activity-subtitle">
-                            Clique na linha para ver os detalhes
+                            Clique na linha para ver os campos
                         </span>
                     </td>
 
@@ -1485,21 +1090,21 @@ function renderActivityRows() {
                             class="activity-duration"
                             data-elapsed-activity-id="${esc(activity.id)}"
                         >
-                            ${esc(time)}
+                            ${esc(elapsed)}
                         </span>
                     </td>
 
                     <td>${statusControl}</td>
 
                     <td>
-                        <span class="${adoptionClass}">
+                        <span class="adoption-label ${activity.assignedTo || activity.adopted ? 'adopted' : ''}">
                             ${esc(adoptionText)}
                         </span>
                     </td>
 
                     <td class="activity-actions-cell">
                         <div class="activity-actions">
-                            ${actionButtons || '—'}
+                            ${actions}
                         </div>
                     </td>
                 </tr>
@@ -1515,35 +1120,31 @@ function renderActivityRows() {
 function renderDashboard() {
     const project = getProject();
 
-    if (!project) return;
+    if (!project) {
+        setView('projects');
+        return;
+    }
 
     $('#project-eyebrow').textContent =
-        `PROJETO ${project.name}`;
+        `PROJETO ${project.shortName}`;
 
     $('#dashboard-title').textContent =
         `Atividades — ${project.name}`;
-
-    $('#open-import').hidden =
-        !isManagerUser();
 
     renderSummary();
     renderActivityRows();
 }
 
 
-/* =========================================================
-   11. DETALHES DA ATIVIDADE (SOMENTE LEITURA)
-========================================================= */
+/* ============================================================
+   11. DETALHES DA ATIVIDADE
+============================================================ */
 
 function renderActivityDetails(activityId) {
     const activity = currentActivity(activityId);
 
     if (!activity) {
-        toast(
-            'Atividade não encontrada. Atualize os dados.',
-            true
-        );
-
+        toast('Atividade não encontrada.', true);
         return;
     }
 
@@ -1556,37 +1157,37 @@ function renderActivityDetails(activityId) {
 
     const metadata = [
         [
-            'Status no Oviv',
+            'Status',
             STATUS[activity.status]?.label || activity.status
         ],
         [
             'Responsável atribuído',
-            activity.assignedTo || 'Ainda não atribuído'
+            activity.assignedTo || 'Não atribuída'
         ],
         [
             'Atribuída em',
             formatDateTime(activity.assignedAt)
         ],
         [
-            'Responsável pela adoção',
-            activity.adoptedBy || 'Ainda não adotada'
+            'Analista que adotou',
+            activity.adoptedBy || 'Não adotada'
         ],
         [
-            'Adoção iniciada em',
-            formatDateTime(activity.adoptedAt)
+            'Início do cronômetro',
+            formatDateTime(activity.startedAt)
         ],
         [
-            'Tempo decorrido',
+            'Tempo de atividade',
             activity.adopted
                 ? formatDuration(elapsedSeconds(activity))
-                : 'Cronômetro não iniciado'
+                : 'Não iniciado'
         ],
         [
-            'Finalizada em',
+            'Finalização',
             formatDateTime(activity.completedAt)
         ],
         [
-            'Importada em',
+            'Importação',
             formatDateTime(activity.createdAt)
         ]
     ];
@@ -1609,255 +1210,16 @@ function renderActivityDetails(activityId) {
             </div>
         `).join('');
 
-    // Abrir os detalhes não atribui nem adota uma atividade.
+    // Visualizar detalhes não altera a atividade.
     $('#activity-detail-dialog').showModal();
 }
 
 
-/* =========================================================
-   12. ADOÇÃO DA ATIVIDADE PELO ANALISTA
-========================================================= */
+/* ============================================================
+   12. ATRIBUIR ANALISTA FICTÍCIO
+============================================================ */
 
-async function adoptActivity(activityId) {
-    const activity = currentActivity(activityId);
-
-    if (!activity) {
-        toast('Atividade não encontrada.', true);
-        return;
-    }
-
-    if (!isAnalystUser()) {
-        toast(
-            'Entre com uma conta de analista para adotar atividades.',
-            true
-        );
-
-        return;
-    }
-
-    if (activity.adopted) {
-        toast('Esta atividade já foi adotada.', true);
-        return;
-    }
-
-    const userId = getLoggedUserId();
-
-    if (
-        activity.assignedToId &&
-        activity.assignedToId !== userId
-    ) {
-        toast(
-            'Esta atividade foi atribuída a outro analista.',
-            true
-        );
-
-        return;
-    }
-
-    if (!confirm(
-        `Adotar "${activity.title}" e iniciar o cronômetro?`
-    )) {
-        return;
-    }
-
-    try {
-        await apiRequest(
-            `/projects/${encodeURIComponent(currentProjectId)}/activities/${encodeURIComponent(activity.id)}/adopt`,
-            {
-                method: 'POST'
-            }
-        );
-
-        toast(
-            'Atividade adotada. Cronômetro iniciado!'
-        );
-
-        await refreshCurrentProject({
-            silent: true
-        });
-    } catch (error) {
-        toast(error.message, true);
-    }
-}
-
-
-/* =========================================================
-   13. ATUALIZAÇÃO DE STATUS
-========================================================= */
-
-async function updateActivityStatus(
-    activityId,
-    nextStatus
-) {
-    const activity = currentActivity(activityId);
-
-    if (
-        !activity ||
-        !isAnalystUser() ||
-        activity.adoptedById !== getLoggedUserId()
-    ) {
-        toast(
-            'Somente o analista responsável pode atualizar esta atividade.',
-            true
-        );
-
-        await refreshCurrentProject({
-            silent: true
-        });
-
-        return;
-    }
-
-    if (!WORKFLOW_STATUSES.includes(nextStatus)) {
-        toast('Status inválido.', true);
-        return;
-    }
-
-    if (FINAL_STATUSES.has(activity.status)) {
-        toast('Esta atividade já foi finalizada.', true);
-        return;
-    }
-
-    if (activity.status === nextStatus) return;
-
-    try {
-        await apiRequest(
-            `/projects/${encodeURIComponent(currentProjectId)}/activities/${encodeURIComponent(activity.id)}/status`,
-            jsonBody('PATCH', {
-                status: nextStatus
-            })
-        );
-
-        toast(
-            `Etapa atualizada: ${STATUS[nextStatus]?.label || nextStatus}.`
-        );
-
-        await refreshCurrentProject({
-            silent: true
-        });
-    } catch (error) {
-        toast(error.message, true);
-
-        await refreshCurrentProject({
-            silent: true
-        });
-    }
-}
-
-
-/* =========================================================
-   14. CADASTRO E LISTAGEM DE ANALISTAS (GESTOR)
-========================================================= */
-
-async function loadAnalysts() {
-    if (!isManagerUser()) return [];
-
-    const result = await authRequest('/analysts');
-
-    analystsCache = result.analysts || [];
-
-    $('#analysts-table-body').innerHTML =
-        analystsCache.map(analyst => `
-            <tr>
-                <td>${esc(analyst.id)}</td>
-                <td>${esc(analyst.name)}</td>
-                <td>${esc(analyst.email)}</td>
-                <td>${esc(analyst.employee_code || '—')}</td>
-            </tr>
-        `).join('');
-
-    $('#analysts-empty').hidden =
-        analystsCache.length > 0;
-
-    renderAssignmentOptions();
-
-    return analystsCache;
-}
-
-async function createAnalyst(event) {
-    event.preventDefault();
-
-    if (!isManagerUser()) {
-        toast(
-            'Somente o gestor pode cadastrar analistas.',
-            true
-        );
-
-        return;
-    }
-
-    const button = $('#analyst-create-submit');
-
-    const payload = {
-        name: $('#analyst-full-name').value.trim(),
-        email: $('#analyst-email').value.trim(),
-        employeeCode: $('#analyst-code').value.trim(),
-        password: $('#analyst-password').value
-    };
-
-    button.disabled = true;
-    button.textContent = 'Cadastrando…';
-
-    try {
-        const result = await authRequest(
-            '/analysts',
-            jsonBody('POST', payload)
-        );
-
-        $('#analyst-create-form').reset();
-
-        await loadAnalysts();
-
-        toast(
-            `Analista ${result.user.name} cadastrado com sucesso.`
-        );
-    } catch (error) {
-        toast(error.message, true);
-    } finally {
-        button.disabled = false;
-        button.textContent = 'Cadastrar analista';
-    }
-}
-
-
-/* =========================================================
-   15. ATRIBUIÇÃO DA ATIVIDADE PELO GESTOR
-========================================================= */
-
-function renderAssignmentOptions() {
-    const select = $('#assign-analyst-select');
-
-    if (!select) return;
-
-    if (!analystsCache.length) {
-        select.innerHTML = `
-            <option value="">
-                Nenhum analista ativo cadastrado
-            </option>
-        `;
-
-        return;
-    }
-
-    select.innerHTML =
-        '<option value="">Selecione um analista</option>' +
-        analystsCache.map(analyst => `
-            <option value="${esc(analyst.id)}">
-                ${esc(analyst.name)}
-            </option>
-        `).join('');
-}
-
-async function openAssignDialog(activityId) {
-    if (!isManagerUser()) {
-        toast(
-            'Somente o gestor pode atribuir atividades.',
-            true
-        );
-
-        return;
-    }
-
+function openAssignDialog(activityId) {
     const activity = currentActivity(activityId);
 
     if (!activity || activity.adopted) {
@@ -1874,143 +1236,203 @@ async function openAssignDialog(activityId) {
     $('#assign-activity-label').textContent =
         `${activity.identifier} — ${activity.title}`;
 
-    try {
-        await loadAnalysts();
+    $('#assign-analyst-select').innerHTML =
+        '<option value="">Selecione um analista</option>' +
+        DEMO_ANALYSTS.map(analyst => `
+            <option
+                value="${esc(analyst.id)}"
+                ${activity.assignedToId === analyst.id ? 'selected' : ''}
+            >
+                ${esc(analyst.name)}
+            </option>
+        `).join('');
 
-        if (!analystsCache.length) {
-            toast(
-                'Cadastre um analista antes de atribuir atividades.',
-                true
-            );
-
-            return;
-        }
-
-        $('#assign-analyst-select').value =
-            activity.assignedToId
-                ? String(activity.assignedToId)
-                : '';
-
-        $('#assign-dialog').showModal();
-    } catch (error) {
-        toast(error.message, true);
-    }
+    $('#assign-dialog').showModal();
 }
 
-async function submitAssignment(event) {
+function submitAssignment(event) {
     event.preventDefault();
 
-    if (
-        !isManagerUser() ||
-        !currentProjectId ||
-        !assigningActivityId
-    ) {
+    const activity = currentActivity(assigningActivityId);
+
+    if (!activity || activity.adopted) {
         toast(
-            'Não foi possível identificar a atividade para atribuição.',
+            'A atividade não pode mais ser atribuída.',
             true
         );
 
+        $('#assign-dialog').close();
         return;
     }
 
-    const analystId = Number(
-        $('#assign-analyst-select').value
+    const analystId = $('#assign-analyst-select').value;
+
+    const analyst = DEMO_ANALYSTS.find(
+        item => item.id === analystId
     );
 
-    if (!Number.isSafeInteger(analystId) || analystId <= 0) {
+    if (!analyst) {
         toast('Selecione um analista.', true);
         return;
     }
 
-    const button = $('#assign-submit');
+    const previous = activity.assignedTo;
 
-    button.disabled = true;
-    button.textContent = 'Atribuindo…';
+    activity.assignedToId = analyst.id;
+    activity.assignedTo = analyst.name;
+    activity.assignedAt = new Date().toISOString();
 
-    try {
-        await apiRequest(
-            `/projects/${encodeURIComponent(currentProjectId)}/activities/${encodeURIComponent(assigningActivityId)}/assign`,
-            jsonBody('PATCH', {
-                analystId
-            })
-        );
+    logAction(
+        previous
+            ? 'Atribuição alterada'
+            : 'Atividade atribuída',
+        `${activity.identifier} · Responsável: ${analyst.name}`
+    );
 
-        $('#assign-dialog').close();
+    if (!saveState()) return;
 
-        assigningActivityId = null;
+    $('#assign-dialog').close();
 
-        toast('Atividade atribuída com sucesso.');
+    assigningActivityId = null;
 
-        await refreshCurrentProject({
-            silent: true
-        });
-    } catch (error) {
-        toast(error.message, true);
-    } finally {
-        button.disabled = false;
-        button.textContent = 'Confirmar atribuição';
-    }
+    renderProjectCards();
+    renderDashboard();
+    renderHistory();
+
+    toast(
+        `Atividade atribuída a ${analyst.name} na demonstração.`
+    );
 }
 
 
-/* =========================================================
-   16. IMPORTAÇÃO DE PLANILHAS (GESTOR)
-========================================================= */
+/* ============================================================
+   13. ADOÇÃO E CRONÔMETRO
+============================================================ */
 
-function stableFingerprint(rawData) {
-    const canonical = Object.keys(rawData)
-        .sort((a, b) => a.localeCompare(b))
-        .map(key =>
-            `${normalizeText(key)}=${normalizeText(rawData[key])}`
-        )
-        .join('|');
+function adoptActivity(activityId) {
+    const activity = currentActivity(activityId);
 
-    let hash = 2166136261;
-
-    for (let index = 0; index < canonical.length; index++) {
-        hash ^= canonical.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-
-    return `row-${(hash >>> 0).toString(16).padStart(8, '0')}`;
-}
-
-function toSafeRawData(row) {
-    const result = {};
-
-    for (const [key, value] of Object.entries(row)) {
-        const header = String(key || '').trim();
-        const cell = cleanCell(value);
-
-        if (!header || !cell) continue;
-
-        result[header] = cell.slice(0, 4000);
-    }
-
-    return result;
-}
-
-function resetImportView() {
-    if (pendingImport) return;
-
-    $('#import-preview').hidden = true;
-    $('#import-summary').textContent = '';
-    $('#import-preview-body').innerHTML = '';
-
-    $('#confirm-import').disabled = true;
-}
-
-async function prepareImport(event) {
-    event.preventDefault();
-
-    if (!isManagerUser()) {
+    if (!activity || activity.adopted) {
         toast(
-            'Somente o gestor pode importar planilhas.',
+            'A atividade não está disponível para adoção.',
             true
         );
 
         return;
     }
+
+    const actingName =
+        activity.assignedTo ||
+        DEMO_ACTOR;
+
+    if (!confirm(
+        `Adotar "${activity.title}" como ${actingName} e iniciar o cronômetro?`
+    )) {
+        return;
+    }
+
+    const now = new Date().toISOString();
+
+    activity.adopted = true;
+    activity.adoptedBy = actingName;
+
+    activity.adoptedAt = now;
+    activity.startedAt = now;
+
+    activity.completedAt = null;
+
+    activity.status = 'CONTATANDO_TECNICO';
+
+    logAction(
+        'Atividade adotada',
+        `${activity.identifier} · ${activity.title} · ` +
+        `Analista: ${actingName} · Cronômetro iniciado.`
+    );
+
+    if (!saveState()) return;
+
+    renderProjectCards();
+    renderDashboard();
+    renderHistory();
+
+    toast(
+        'Atividade adotada. Cronômetro iniciado na demonstração!'
+    );
+}
+
+
+/* ============================================================
+   14. ATUALIZAR ETAPA
+============================================================ */
+
+function updateActivityStatus(activityId, nextStatus) {
+    const activity = currentActivity(activityId);
+
+    if (!activity || !activity.adopted) {
+        toast(
+            'Adote a atividade antes de alterar a etapa.',
+            true
+        );
+
+        renderDashboard();
+        return;
+    }
+
+    if (!WORKFLOW_STATUSES.includes(nextStatus)) {
+        toast('Status inválido.', true);
+        renderDashboard();
+        return;
+    }
+
+    if (FINAL_STATUSES.has(activity.status)) {
+        toast(
+            'Esta atividade já foi finalizada.',
+            true
+        );
+
+        renderDashboard();
+        return;
+    }
+
+    if (activity.status === nextStatus) return;
+
+    const oldLabel =
+        STATUS[activity.status]?.label ||
+        activity.status;
+
+    const newLabel =
+        STATUS[nextStatus]?.label ||
+        nextStatus;
+
+    activity.status = nextStatus;
+
+    if (FINAL_STATUSES.has(nextStatus)) {
+        activity.completedAt = new Date().toISOString();
+    } else {
+        activity.completedAt = null;
+    }
+
+    logAction(
+        'Status atualizado',
+        `${activity.identifier} · ${oldLabel} → ${newLabel}`
+    );
+
+    if (!saveState()) return;
+
+    renderProjectCards();
+    renderDashboard();
+    renderHistory();
+
+    toast(`Etapa atualizada: ${newLabel}.`);
+}
+
+
+/* ============================================================
+   15. IMPORTAÇÃO LOCAL DE PLANILHAS
+============================================================ */
+
+async function prepareImport(event) {
+    event.preventDefault();
 
     const file = $('#import-file').files?.[0];
 
@@ -2030,7 +1452,7 @@ async function prepareImport(event) {
 
     if (!window.XLSX) {
         toast(
-            'A biblioteca Excel não foi carregada. Confira sua conexão e atualize a página.',
+            'A biblioteca Excel não foi carregada. Verifique a conexão e recarregue a página.',
             true
         );
 
@@ -2063,21 +1485,19 @@ async function prepareImport(event) {
     try {
         const workbook = window.XLSX.read(
             await file.arrayBuffer(),
-            {
-                type: 'array'
-            }
+            { type: 'array' }
         );
 
-        const sheetName = workbook.SheetNames[0];
+        const firstSheet = workbook.SheetNames[0];
 
-        if (!sheetName) {
+        if (!firstSheet) {
             throw new Error(
-                'Nenhuma aba foi encontrada no arquivo.'
+                'Nenhuma aba encontrada no arquivo.'
             );
         }
 
         const rows = window.XLSX.utils.sheet_to_json(
-            workbook.Sheets[sheetName],
+            workbook.Sheets[firstSheet],
             {
                 defval: '',
                 raw: false
@@ -2086,7 +1506,7 @@ async function prepareImport(event) {
 
         if (!rows.length) {
             throw new Error(
-                'A primeira aba está vazia.'
+                'A primeira aba da planilha está vazia.'
             );
         }
 
@@ -2103,12 +1523,13 @@ async function prepareImport(event) {
                 continue;
             }
 
-            const title = findTitleFromData(rawData);
-
             const identifier =
                 findIdentifierFromData(rawData);
 
-            if (!title && !identifier) {
+            const title =
+                findTitleFromData(rawData);
+
+            if (!identifier && !title) {
                 ignored++;
                 continue;
             }
@@ -2125,7 +1546,7 @@ async function prepareImport(event) {
             validRows.push({
                 rowKey,
                 identifier: identifier || rowKey,
-                title: title || `Atividade ${identifier || rowKey}`,
+                title: title || `Atividade ${identifier}`,
                 city: findCityFromData(rawData),
                 rawData
             });
@@ -2133,7 +1554,7 @@ async function prepareImport(event) {
 
         if (!validRows.length) {
             throw new Error(
-                'Nenhuma linha válida foi encontrada. Confira se a planilha contém colunas como ID, UNIDADE ou ATIVIDADE.'
+                'Nenhuma linha válida foi encontrada. Confira os campos ID, UNIDADE ou ATIVIDADE.'
             );
         }
 
@@ -2151,7 +1572,7 @@ async function prepareImport(event) {
 
         $('#import-summary').textContent =
             error.message ||
-            'Não foi possível analisar a planilha.';
+            'Não foi possível analisar o arquivo.';
 
         $('#confirm-import').disabled = true;
 
@@ -2165,17 +1586,16 @@ function renderImportPreview() {
     const rows = pendingImport.rows;
 
     $('#import-preview-count').textContent =
-        `${rows.length} atividades para importar`;
+        `${rows.length} atividades novas`;
 
     $('#import-summary').innerHTML = `
         Arquivo: <strong>${esc(pendingImport.fileName)}</strong><br>
         Linhas lidas: <strong>${pendingImport.totalRows}</strong> ·
         Linhas válidas: <strong>${rows.length}</strong> ·
-        Linhas ignoradas: <strong>${pendingImport.ignored}</strong>.
+        Linhas ignoradas ou repetidas no arquivo:
+        <strong>${pendingImport.ignored}</strong>.
         <br>
-        Após a confirmação, as linhas serão enviadas à API e
-        gravadas no PostgreSQL. Duplicatas já existentes no banco
-        serão ignoradas pelo servidor.
+        Os dados serão guardados somente neste navegador.
     `;
 
     $('#import-preview-body').innerHTML =
@@ -2206,12 +1626,12 @@ function renderImportPreview() {
         );
     }
 
-    $('#confirm-import').disabled = false;
+    $('#confirm-import').disabled =
+        rows.length === 0;
 }
 
-async function confirmImport() {
+function confirmImport() {
     if (
-        !isManagerUser() ||
         !pendingImport ||
         pendingImport.projectId !== currentProjectId
     ) {
@@ -2223,67 +1643,81 @@ async function confirmImport() {
         return;
     }
 
-    const rows = pendingImport.rows;
-    const projectId = pendingImport.projectId;
+    const target = getActivities();
+    const existingKeys = new Set(
+        target.map(activity => activity.rowKey)
+    );
 
-    const button = $('#confirm-import');
-
-    let imported = 0;
+    let added = 0;
     let duplicates = 0;
-    let invalid = 0;
 
-    button.disabled = true;
+    const newActivities = [];
 
-    try {
-        for (
-            let index = 0;
-            index < rows.length;
-            index += IMPORT_BATCH_SIZE
-        ) {
-            const batch = rows.slice(
-                index,
-                index + IMPORT_BATCH_SIZE
-            );
-
-            button.textContent =
-                `Enviando ${Math.min(index + batch.length, rows.length)} de ${rows.length}…`;
-
-            const result = await apiRequest(
-                `/projects/${encodeURIComponent(projectId)}/import`,
-                jsonBody('POST', {
-                    activities: batch
-                })
-            );
-
-            imported += Number(result.imported || 0);
-            duplicates += Number(result.duplicates || 0);
-            invalid += Number(result.invalid || 0);
+    for (const item of pendingImport.rows) {
+        if (existingKeys.has(item.rowKey)) {
+            duplicates++;
+            continue;
         }
 
-        pendingImport = null;
+        newActivities.push({
+            id: `import-${newId()}`,
+            rowKey: item.rowKey,
+            rawData: item.rawData,
 
-        $('#import-form').reset();
+            identifier: item.identifier,
+            title: item.title,
+            city: item.city,
 
-        resetImportView();
+            status: 'PENDENTE',
 
-        await refreshCurrentProject({
-            silent: true
+            assignedToId: null,
+            assignedTo: '',
+            assignedAt: null,
+
+            adopted: false,
+            adoptedBy: '',
+            adoptedAt: null,
+            startedAt: null,
+            completedAt: null,
+
+            createdAt: new Date().toISOString()
         });
 
-        setView('dashboard');
-
-        toast(
-            `Importação concluída: ${imported} novas atividades, ${duplicates} duplicatas ignoradas e ${invalid} linhas inválidas.`
-        );
-    } catch (error) {
-        toast(
-            `A importação não foi concluída: ${error.message}. Verifique o projeto antes de tentar novamente.`,
-            true
-        );
-    } finally {
-        button.disabled = false;
-        button.textContent = 'Confirmar importação';
+        existingKeys.add(item.rowKey);
+        added++;
     }
+
+    const previousLength = target.length;
+
+    target.push(...newActivities);
+
+    logAction(
+        'Planilha importada',
+        `${pendingImport.fileName} · ` +
+        `${added} atividades adicionadas · ` +
+        `${duplicates} duplicatas ignoradas.`
+    );
+
+    if (!saveState()) {
+        target.splice(previousLength);
+        return;
+    }
+
+    pendingImport = null;
+
+    $('#import-form').reset();
+
+    resetImportView();
+
+    renderProjectCards();
+    renderDashboard();
+    renderHistory();
+
+    setView('dashboard');
+
+    toast(
+        `Importação concluída: ${added} novas atividades, ${duplicates} duplicatas ignoradas.`
+    );
 }
 
 function cancelImport() {
@@ -2293,33 +1727,46 @@ function cancelImport() {
 
     resetImportView();
 
-    toast(
-        'Importação cancelada. Nenhuma nova linha foi enviada.'
-    );
+    toast('Importação cancelada.');
+}
+
+function resetImportView() {
+    if (pendingImport) return;
+
+    $('#import-preview').hidden = true;
+
+    $('#import-summary').textContent = '';
+    $('#import-preview-body').innerHTML = '';
+
+    $('#confirm-import').disabled = true;
 }
 
 
-/* =========================================================
-   17. HISTÓRICO
-========================================================= */
+/* ============================================================
+   16. HISTÓRICO LOCAL
+============================================================ */
 
 function renderHistory() {
     const query = normalizeText(
         $('#history-search').value
     );
 
-    const select = $('#history-action-filter');
-    const oldValue = select.value;
+    const actionSelect = $('#history-action-filter');
+    const previousValue = actionSelect.value;
+
+    const entries = state.auditLog.filter(entry =>
+        entry.projectId === currentProjectId
+    );
 
     const actions = [
         ...new Set(
-            currentHistory.map(entry => entry.action)
+            entries.map(entry => entry.action)
         )
     ].sort((a, b) =>
         a.localeCompare(b, 'pt-BR')
     );
 
-    select.innerHTML =
+    actionSelect.innerHTML =
         '<option value="">Todas as ações</option>' +
         actions.map(action => `
             <option value="${esc(action)}">
@@ -2327,13 +1774,13 @@ function renderHistory() {
             </option>
         `).join('');
 
-    if (actions.includes(oldValue)) {
-        select.value = oldValue;
+    if (actions.includes(previousValue)) {
+        actionSelect.value = previousValue;
     }
 
-    const actionFilter = select.value;
+    const actionFilter = actionSelect.value;
 
-    const filtered = [...currentHistory]
+    const filtered = [...entries]
         .sort((a, b) =>
             new Date(b.at) - new Date(a.at)
         )
@@ -2345,16 +1792,13 @@ function renderHistory() {
                 return false;
             }
 
-            const searchText = normalizeText([
+            const text = normalizeText([
                 entry.action,
                 entry.user,
-                entry.detail,
-                entry.identifier,
-                entry.previousStatus,
-                entry.newStatus
+                entry.detail
             ].join(' '));
 
-            return !query || searchText.includes(query);
+            return !query || text.includes(query);
         });
 
     $('#history-count').textContent =
@@ -2369,7 +1813,7 @@ function renderHistory() {
                 </td>
                 <td>${esc(entry.user)}</td>
                 <td class="history-detail">
-                    ${esc(entry.detail || entry.identifier || '—')}
+                    ${esc(entry.detail)}
                 </td>
             </tr>
         `).join('');
@@ -2379,22 +1823,17 @@ function renderHistory() {
 }
 
 function exportHistoryCSV() {
-    const rows = [
-        [
-            'Data',
-            'Ação',
-            'Usuário',
-            'Identificador',
-            'Detalhes'
-        ],
+    const entries = state.auditLog.filter(entry =>
+        entry.projectId === currentProjectId
+    );
 
-        ...currentHistory.map(entry => [
-            entry.at
-                ? new Date(entry.at).toISOString()
-                : '',
+    const rows = [
+        ['Data', 'Ação', 'Usuário', 'Detalhe'],
+
+        ...entries.map(entry => [
+            entry.at,
             entry.action,
             entry.user,
-            entry.identifier,
             entry.detail
         ])
     ];
@@ -2407,41 +1846,65 @@ function exportHistoryCSV() {
 
     const blob = new Blob(
         ['\uFEFF', csv],
-        {
-            type: 'text/csv;charset=utf-8;'
-        }
+        { type: 'text/csv;charset=utf-8;' }
     );
 
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const anchor = document.createElement('a');
 
-    link.href = url;
-
-    link.download =
+    anchor.href = url;
+    anchor.download =
         `oviv-historico-${currentProjectId}.csv`;
 
-    document.body.appendChild(link);
+    document.body.appendChild(anchor);
 
-    link.click();
-    link.remove();
+    anchor.click();
+    anchor.remove();
 
     URL.revokeObjectURL(url);
 
-    toast('Histórico exportado para CSV.');
+    toast('Histórico exportado.');
 }
 
 
-/* =========================================================
-   18. EVENTOS DE CLIQUE E TECLADO
-========================================================= */
+/* ============================================================
+   17. RESTAURAR EXEMPLOS
+============================================================ */
 
-document.addEventListener('click', async event => {
+function resetDemo() {
+    if (!confirm(
+        'Restaurar os exemplos? Isso apagará as atividades importadas e o histórico salvo nesta demonstração.'
+    )) {
+        return;
+    }
+
+    state = createSeedState();
+
+    saveState();
+
+    currentProjectId = null;
+    pendingImport = null;
+    assigningActivityId = null;
+
+    renderProjectCards();
+
+    setView('projects');
+
+    toast('Exemplos restaurados.');
+}
+
+
+/* ============================================================
+   18. EVENTOS
+============================================================ */
+
+document.addEventListener('click', event => {
     const nav = event.target.closest('[data-nav]');
 
     if (nav) {
         event.preventDefault();
 
-        await navigateTo(nav.dataset.nav);
+        setView(nav.dataset.nav);
         return;
     }
 
@@ -2449,7 +1912,7 @@ document.addEventListener('click', async event => {
         event.target.closest('[data-open-import]');
 
     if (openImport) {
-        await navigateTo('import');
+        setView('import');
         return;
     }
 
@@ -2460,31 +1923,7 @@ document.addEventListener('click', async event => {
 
     switch (action.dataset.action) {
         case 'open-project':
-            await selectProject(
-                action.dataset.projectId
-            );
-            return;
-
-        case 'reload-projects':
-            await loadProjects().catch(error => {
-                toast(error.message, true);
-            });
-            return;
-
-        case 'adopt-activity':
-            event.stopPropagation();
-
-            await adoptActivity(
-                action.dataset.activityId
-            );
-            return;
-
-        case 'assign-activity':
-            event.stopPropagation();
-
-            await openAssignDialog(
-                action.dataset.activityId
-            );
+            selectProject(action.dataset.projectId);
             return;
 
         case 'filter-in-progress':
@@ -2502,6 +1941,22 @@ document.addEventListener('click', async event => {
                 });
             return;
 
+        case 'assign-activity':
+            event.stopPropagation();
+
+            openAssignDialog(
+                action.dataset.activityId
+            );
+            return;
+
+        case 'adopt-activity':
+            event.stopPropagation();
+
+            adoptActivity(
+                action.dataset.activityId
+            );
+            return;
+
         case 'change-status':
             return;
 
@@ -2513,14 +1968,14 @@ document.addEventListener('click', async event => {
     }
 });
 
-document.addEventListener('change', async event => {
+document.addEventListener('change', event => {
     const select = event.target.closest(
         'select[data-action="change-status"]'
     );
 
     if (!select) return;
 
-    await updateActivityStatus(
+    updateActivityStatus(
         select.dataset.activityId,
         select.value
     );
@@ -2554,44 +2009,9 @@ document.addEventListener('keydown', event => {
 });
 
 
-/* =========================================================
-   19. LIGAÇÃO DOS FORMULÁRIOS E BOTÕES
-========================================================= */
-
-$('#login-form').addEventListener(
-    'submit',
-    handleLogin
-);
-
-$('#logout-button').addEventListener(
-    'click',
-    handleLogout
-);
-
-$('#analyst-create-form').addEventListener(
-    'submit',
-    createAnalyst
-);
-
-$('#assign-form').addEventListener(
-    'submit',
-    submitAssignment
-);
-
-$('#assign-close').addEventListener('click', () => {
-    assigningActivityId = null;
-    $('#assign-dialog').close();
-});
-
-$('#assign-cancel').addEventListener('click', () => {
-    assigningActivityId = null;
-    $('#assign-dialog').close();
-});
-
-$('#open-import').addEventListener(
-    'click',
-    () => navigateTo('import')
-);
+/* ============================================================
+   19. EVENTOS DOS CONTROLES
+============================================================ */
 
 $('#activity-search').addEventListener(
     'input',
@@ -2614,6 +2034,10 @@ $('#clear-search').addEventListener('click', () => {
     $('#adoption-filter').value = '';
 
     renderActivityRows();
+});
+
+$('#open-import').addEventListener('click', () => {
+    setView('import');
 });
 
 $('#import-form').addEventListener(
@@ -2646,6 +2070,26 @@ $('#export-history').addEventListener(
     exportHistoryCSV
 );
 
+$('#reset-demo').addEventListener(
+    'click',
+    resetDemo
+);
+
+$('#assign-form').addEventListener(
+    'submit',
+    submitAssignment
+);
+
+$('#assign-close').addEventListener('click', () => {
+    assigningActivityId = null;
+    $('#assign-dialog').close();
+});
+
+$('#assign-cancel').addEventListener('click', () => {
+    assigningActivityId = null;
+    $('#assign-dialog').close();
+});
+
 $('#close-detail').addEventListener(
     'click',
     () => $('#activity-detail-dialog').close()
@@ -2654,87 +2098,27 @@ $('#close-detail').addEventListener(
 $('#activity-detail-dialog').addEventListener(
     'click',
     event => {
-        if (
-            event.target ===
-            $('#activity-detail-dialog')
-        ) {
+        if (event.target === $('#activity-detail-dialog')) {
             $('#activity-detail-dialog').close();
         }
     }
 );
 
 
-/* =========================================================
-   20. ATUALIZAÇÃO AUTOMÁTICA
-========================================================= */
+/* ============================================================
+   20. INICIALIZAÇÃO
+============================================================ */
 
-// Atualiza visualmente o cronômetro a cada segundo.
+// Nenhuma chamada a /api/auth, /api/oviv ou ao PostgreSQL.
+// O login está temporariamente suspenso na interface.
+
+state = loadState();
+
+renderProjectCards();
+
+setView('projects');
+
 window.setInterval(
     updateElapsedDisplays,
     1000
 );
-
-// Atualiza dados compartilhados do servidor periodicamente.
-window.setInterval(async () => {
-    if (
-        !authenticatedUser ||
-        document.hidden
-    ) {
-        return;
-    }
-
-    if (currentProjectId) {
-        await refreshCurrentProject({
-            silent: true
-        });
-    } else {
-        await loadProjects().catch(() => {});
-    }
-}, 6000);
-
-window.addEventListener('focus', async () => {
-    if (!authenticatedUser) return;
-
-    if (currentProjectId) {
-        await refreshCurrentProject({
-            silent: true
-        });
-    } else {
-        await loadProjects().catch(() => {});
-    }
-});
-
-window.addEventListener('hashchange', async () => {
-    if (!authenticatedUser) return;
-
-    const requested = location.hash.slice(1);
-
-    if (requested === 'projects') {
-        await navigateTo('projects');
-        return;
-    }
-
-    if (
-        [
-            'dashboard',
-            'import',
-            'history'
-        ].includes(requested) &&
-        currentProjectId
-    ) {
-        await navigateTo(requested);
-    }
-});
-
-
-/* =========================================================
-   21. INICIALIZAÇÃO
-========================================================= */
-
-ensureUserLabel();
-
-// Esconde o sistema até que a sessão seja confirmada.
-showAuthenticatedShell(false);
-
-// Verifica se já existe uma sessão válida no servidor.
-initializeAuthentication();

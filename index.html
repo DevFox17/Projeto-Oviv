@@ -1,516 +1,821 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#176b4b">
-  <title>Oviv | Gestão de Atividades</title>
-  <link rel="stylesheet" href="./public/style.css">
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
-  <script src="./public/dashboard.js" defer></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#176b4b">
+
+    <title>Oviv | Gestão de Atividades</title>
+
+    <link rel="stylesheet" href="./public/style.css">
+
+    <script
+        src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+        defer
+    ></script>
+
+    <script src="./public/dashboard.js" defer></script>
 </head>
 
 <body>
-  <section id="auth-screen" class="auth-screen">
-    <div class="auth-card">
-      <div class="auth-brand">
-        <span class="brand-mark">O</span>
-        <div>
-          <strong>oviv</strong>
-          <small>GESTÃO DE ATIVIDADES</small>
-        </div>
-      </div>
 
-      <p class="eyebrow">ACESSO AO SISTEMA</p>
-      <h1>Bem-vindo de volta</h1>
-      <p class="subtitle">
-        Entre com seu e-mail e senha para acessar seus projetos.
-      </p>
+    <!--
+        LOGIN TEMPORARIAMENTE DESATIVADO.
 
-      <form id="login-form">
-        <label for="login-email">E-mail</label>
-        <input id="login-email" name="email" type="email" autocomplete="username" required
-          placeholder="seu.email@empresa.com">
+        Quando retomarmos a autenticação, descomente este bloco
+        e remova a inicialização de demonstração de dashboard.js.
 
-        <label for="login-password">Senha</label>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required
-          placeholder="Digite sua senha">
+        <section id="auth-screen" class="auth-screen">
+            <div class="auth-card">
+                <div class="auth-brand">
+                    <span class="brand-mark">O</span>
+                    <div>
+                        <strong>oviv</strong>
+                        <small>GESTÃO DE ATIVIDADES</small>
+                    </div>
+                </div>
 
-        <p id="login-message" class="login-message" role="alert"></p>
+                <p class="eyebrow">ACESSO AO SISTEMA</p>
+                <h1>Bem-vindo de volta</h1>
 
-        <button id="login-submit" class="button button-primary" type="submit">
-          Entrar
-        </button>
-      </form>
+                <p class="subtitle">
+                    Entre com seu e-mail e senha para acessar seus projetos.
+                </p>
 
-      <p class="auth-footer">
-        Acesso destinado aos usuários cadastrados pelo gestor.
-      </p>
-    </div>
-  </section>
-  <header class="topbar">
-    <a class="brand" href="#projects" data-nav="projects" aria-label="Voltar aos projetos">
-      <span class="brand-mark">O</span>
-      <span class="brand-copy">
-        <strong>oviv</strong>
-        <small>GESTÃO DE ATIVIDADES</small>
-      </span>
-    </a>
+                <form id="login-form">
+                    <label for="login-email">E-mail</label>
+                    <input
+                        id="login-email"
+                        name="email"
+                        type="email"
+                        autocomplete="username"
+                        required
+                    >
 
-    <div class="topbar-right">
-      <button id="logout-button" class="button button-quiet" type="button">
-        Sair
-      </button>
-      <span class="demo-badge">DEMONSTRAÇÃO</span>
-      <span id="current-project-label" class="current-project-label" hidden></span>
-      <button id="reset-demo" class="button button-quiet" type="button">
-        Restaurar exemplos
-      </button>
-    </div>
-  </header>
+                    <label for="login-password">Senha</label>
+                    <input
+                        id="login-password"
+                        name="password"
+                        type="password"
+                        autocomplete="current-password"
+                        required
+                    >
 
-  <div class="demo-notice">
-    <strong>Ambiente demonstrativo.</strong>
-    Os dados são salvos apenas neste navegador. Não há login real,
-    sincronização entre usuários ou conexão com o banco de produção.
-  </div>
+                    <p id="login-message" class="login-message"></p>
 
-  <main class="app-shell">
-
-    <!-- Seleção de projeto -->
-    <section id="view-projects" class="view project-selection" aria-labelledby="projects-title">
-      <div class="page-heading">
-        <p class="eyebrow">ESPAÇO DE TRABALHO</p>
-        <h1 id="projects-title">Em qual projeto vamos trabalhar?</h1>
-        <p class="subtitle">
-          Selecione um projeto para consultar e adotar atividades de configuração lógica.
-        </p>
-      </div>
-
-      <div id="project-cards" class="project-grid"></div>
-
-      <section id="manager-panel" class="panel manager-panel" hidden>
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">ADMINISTRAÇÃO</p>
-            <h2>Gerenciar analistas</h2>
-            <p>
-              Cadastre usuários para que possam entrar com
-              suas próprias credenciais.
-            </p>
-          </div>
-        </div>
-
-        <form id="analyst-create-form" class="form-body">
-          <div class="analyst-form-grid">
-            <div class="checkin-field">
-              <label for="analyst-full-name">Nome completo</label>
-              <input id="analyst-full-name" name="name" required maxlength="150" autocomplete="name"
-                placeholder="Nome do analista">
+                    <button
+                        id="login-submit"
+                        class="button button-primary"
+                        type="submit"
+                    >
+                        Entrar
+                    </button>
+                </form>
             </div>
-
-            <div class="checkin-field">
-              <label for="analyst-email">E-mail de acesso</label>
-              <input id="analyst-email" name="email" type="email" required maxlength="254" autocomplete="email"
-                placeholder="analista@empresa.com">
-            </div>
-
-            <div class="checkin-field">
-              <label for="analyst-code">RE / Matrícula</label>
-              <input id="analyst-code" name="employeeCode" maxlength="50" placeholder="Matrícula (opcional)">
-            </div>
-
-            <div class="checkin-field">
-              <label for="analyst-password">Senha inicial</label>
-              <input id="analyst-password" name="password" type="password" minlength="12" autocomplete="new-password"
-                required placeholder="Mínimo de 12 caracteres">
-            </div>
-          </div>
-
-          <p class="small-muted">
-            Compartilhe a senha inicial com o analista de forma segura.
-            Ele usará o e-mail e essa senha para entrar no sistema.
-          </p>
-
-          <div class="form-actions">
-            <button id="analyst-create-submit" class="button button-primary" type="submit">
-              Cadastrar analista
-            </button>
-          </div>
-        </form>
-
-        <div class="panel-heading">
-          <div>
-            <h2>Analistas cadastrados</h2>
-            <p>Usuários ativos disponíveis para atribuição.</p>
-          </div>
-        </div>
-
-        <div class="table-scroll">
-          <table class="history-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>NOME</th>
-                <th>E-MAIL</th>
-                <th>MATRÍCULA</th>
-              </tr>
-            </thead>
-            <tbody id="analysts-table-body"></tbody>
-          </table>
-        </div>
-
-        <div id="analysts-empty" class="empty-state" hidden>
-          <strong>Nenhum analista cadastrado</strong>
-          <p>Use o formulário acima para criar o primeiro usuário.</p>
-        </div>
-      </section>
-      <p class="privacy-note">
-        Cada projeto tem sua própria lista de atividades nesta demonstração.
-        Os arquivos importados são lidos no navegador e não são enviados ao servidor.
-      </p>
-    </section>
-
-    <!-- Navegação dentro do projeto -->
-    <div id="project-workspace" class="workspace" hidden>
-      <nav class="project-nav" aria-label="Navegação do projeto">
-        <button class="nav-button" type="button" data-nav="projects">← Projetos</button>
-        <button class="nav-button active" type="button" data-nav="dashboard">Atividades</button>
-        <button class="nav-button" type="button" data-nav="history">Histórico</button>
-      </nav>
-
-      <!-- Dashboard do projeto -->
-      <section id="view-dashboard" class="view" aria-labelledby="dashboard-title" hidden>
-        <div class="page-heading page-heading-row">
-          <div>
-            <p id="project-eyebrow" class="eyebrow">PROJETO</p>
-            <h1 id="dashboard-title">Atividades do projeto</h1>
-            <p class="subtitle">
-              Pesquise em qualquer campo importado. Abrir uma linha apenas visualiza
-              a atividade; para adotá-la, use o botão específico.
-            </p>
-          </div>
-
-          <div class="heading-actions">
-            <button id="open-import" class="button button-primary" type="button">
-              ＋ Importar planilha
-            </button>
-          </div>
-        </div>
-
-        <div class="stats-grid" aria-label="Totais das atividades">
-          <article class="stat-card">
-            <span class="stat-label">Total de atividades</span>
-            <strong id="kpi-total" class="stat-number">0</strong>
-            <span class="stat-help">Neste projeto</span>
-          </article>
-
-          <article class="stat-card">
-            <span class="stat-label">Pendentes</span>
-            <strong id="kpi-pending" class="stat-number">0</strong>
-            <span class="stat-help">Aguardando análise ou configuração</span>
-          </article>
-
-          <article class="stat-card">
-            <span class="stat-label">Adotadas</span>
-            <strong id="kpi-adopted" class="stat-number">0</strong>
-            <span class="stat-help">Assumidas por um usuário demonstrativo</span>
-          </article>
-
-          <article class="stat-card">
-            <span class="stat-label">Em configuração</span>
-            <strong id="kpi-configuring" class="stat-number">0</strong>
-            <span class="stat-help">Trabalho iniciado</span>
-          </article>
-
-          <article class="stat-card">
-            <span class="stat-label">Concluídas</span>
-            <strong id="kpi-completed" class="stat-number">0</strong>
-            <span class="stat-help">Configuração finalizada</span>
-          </article>
-
-          <article class="stat-card">
-            <span class="stat-label">Com impedimento</span>
-            <strong id="kpi-blocked" class="stat-number">0</strong>
-            <span class="stat-help">Precisam de atenção</span>
-          </article>
-        </div>
-
-        <section class="panel search-panel">
-          <div class="panel-heading">
-            <div>
-              <h2>Buscar atividade</h2>
-              <p>
-                O termo é comparado com todos os campos importados da linha,
-                inclusive IDs e endereço.
-              </p>
-            </div>
-          </div>
-
-          <div class="search-controls">
-            <label class="sr-only" for="activity-search">Buscar em todos os campos</label>
-            <input id="activity-search" type="search" autocomplete="off"
-              placeholder="Ex.: ID link, ID VGR, endereço, hostname, município…">
-
-            <label class="sr-only" for="status-filter">Filtrar por status</label>
-            <select id="status-filter">
-              <option value="">Todos os status</option>
-              <option value="PENDENTE">Pendente</option>
-              <option value="EM_CONFIGURACAO">Em configuração</option>
-              <option value="CONCLUIDA">Concluída</option>
-              <option value="IMPEDIMENTO">Impedimento</option>
-              <option value="CANCELADA">Cancelada</option>
-            </select>
-
-            <label class="sr-only" for="adoption-filter">Filtrar por adoção</label>
-            <select id="adoption-filter">
-              <option value="">Adotadas e não adotadas</option>
-              <option value="adopted">Somente adotadas</option>
-              <option value="available">Somente não adotadas</option>
-            </select>
-
-            <button id="clear-search" class="button button-secondary" type="button">
-              Limpar
-            </button>
-          </div>
-
-          <div class="table-summary">
-            <span id="results-count">0 resultados</span>
-            <span class="small-muted">
-              Clique na linha para visualizar. A adoção exige clicar em “Adotar atividade”.
-            </span>
-          </div>
-
-          <div class="table-scroll">
-            <table class="activity-table">
-              <thead>
-                <tr>
-                  <th>IDENTIFICADOR</th>
-                  <th>ATIVIDADE / UNIDADE</th>
-                  <th>MUNICÍPIO</th>
-                  <th>STATUS</th>
-                  <th>ADOÇÃO</th>
-                  <th>AÇÃO</th>
-                </tr>
-              </thead>
-              <tbody id="activities-table-body"></tbody>
-            </table>
-          </div>
-
-          <div id="activities-empty" class="empty-state" hidden>
-            <strong>Nenhuma atividade encontrada</strong>
-            <p>Importe uma planilha para este projeto ou altere os filtros da busca.</p>
-            <button class="button button-primary" type="button" data-open-import>
-              Importar planilha
-            </button>
-          </div>
         </section>
-      </section>
+    -->
 
-      <!-- Importação do projeto atual -->
-      <section id="view-import" class="view" hidden>
-        <div class="page-heading">
-          <p class="eyebrow">IMPORTAÇÃO LOCAL</p>
-          <h1>Importar atividades</h1>
-          <p class="subtitle">
-            O arquivo é processado neste navegador. Confira a prévia antes de confirmar.
-          </p>
+    <header class="topbar">
+        <a
+            class="brand"
+            href="#projects"
+            data-nav="projects"
+            aria-label="Voltar aos projetos"
+        >
+            <span class="brand-mark">O</span>
+
+            <span class="brand-copy">
+                <strong>oviv</strong>
+                <small>GESTÃO DE ATIVIDADES</small>
+            </span>
+        </a>
+
+        <div class="topbar-right">
+            <span class="demo-badge">MODO DEMONSTRAÇÃO</span>
+
+            <span
+                id="current-project-label"
+                class="current-project-label"
+                hidden
+            ></span>
+
+            <!--
+                BOTÃO DE SAÍDA DESATIVADO ENQUANTO O LOGIN
+                ESTIVER PAUSADO.
+
+                <button
+                    id="logout-button"
+                    class="button button-quiet"
+                    type="button"
+                >
+                    Sair
+                </button>
+            -->
+
+            <button
+                id="reset-demo"
+                class="button button-quiet"
+                type="button"
+            >
+                Restaurar exemplos
+            </button>
+        </div>
+    </header>
+
+    <div class="demo-notice">
+        <strong>Modo de demonstração.</strong>
+        O login e a comunicação com a API estão temporariamente
+        desativados nesta interface. Os dados ficam salvos somente
+        neste navegador e não são sincronizados entre dispositivos.
+    </div>
+
+    <main class="app-shell">
+
+        <!-- ================================================
+             SELEÇÃO DO PROJETO
+        ================================================= -->
+
+        <section
+            id="view-projects"
+            class="view project-selection"
+            aria-labelledby="projects-title"
+        >
+            <div class="page-heading">
+                <p class="eyebrow">ESPAÇO DE TRABALHO</p>
+
+                <h1 id="projects-title">
+                    Em qual projeto vamos trabalhar?
+                </h1>
+
+                <p class="subtitle">
+                    Selecione um projeto para consultar e adotar
+                    atividades de configuração lógica.
+                </p>
+            </div>
+
+            <div id="project-cards" class="project-grid"></div>
+
+            <p class="privacy-note">
+                Você está usando dados fictícios ou dados que importar
+                manualmente para este navegador. Não utilize informações
+                operacionais reais sem autorização.
+            </p>
+        </section>
+
+
+        <!-- ================================================
+             ESPAÇO INTERNO DO PROJETO
+        ================================================= -->
+
+        <div id="project-workspace" class="workspace" hidden>
+
+            <nav class="project-nav" aria-label="Navegação do projeto">
+                <button
+                    class="nav-button"
+                    type="button"
+                    data-nav="projects"
+                >
+                    ← Projetos
+                </button>
+
+                <button
+                    class="nav-button active"
+                    type="button"
+                    data-nav="dashboard"
+                >
+                    Atividades
+                </button>
+
+                <button
+                    class="nav-button"
+                    type="button"
+                    data-nav="history"
+                >
+                    Histórico
+                </button>
+            </nav>
+
+
+            <!-- ============================================
+                 DASHBOARD
+            ============================================= -->
+
+            <section
+                id="view-dashboard"
+                class="view"
+                aria-labelledby="dashboard-title"
+                hidden
+            >
+                <div class="page-heading page-heading-row">
+                    <div>
+                        <p id="project-eyebrow" class="eyebrow">
+                            PROJETO
+                        </p>
+
+                        <h1 id="dashboard-title">
+                            Atividades do projeto
+                        </h1>
+
+                        <p class="subtitle">
+                            Pesquise em qualquer campo importado.
+                            Abrir uma linha apenas visualiza a atividade.
+                        </p>
+                    </div>
+
+                    <div class="heading-actions">
+                        <button
+                            id="open-import"
+                            class="button button-primary"
+                            type="button"
+                        >
+                            ＋ Importar planilha
+                        </button>
+                    </div>
+                </div>
+
+
+                <!-- TOTAIS -->
+
+                <div class="stats-grid" aria-label="Totais das atividades">
+
+                    <article class="stat-card">
+                        <span class="stat-label">
+                            Total de atividades
+                        </span>
+
+                        <strong id="kpi-total" class="stat-number">0</strong>
+
+                        <span class="stat-help">
+                            Neste projeto
+                        </span>
+                    </article>
+
+                    <article class="stat-card">
+                        <span class="stat-label">
+                            Pendentes
+                        </span>
+
+                        <strong id="kpi-pending" class="stat-number">0</strong>
+
+                        <span class="stat-help">
+                            Aguardando início
+                        </span>
+                    </article>
+
+                    <article class="stat-card">
+                        <span class="stat-label">
+                            Adotadas
+                        </span>
+
+                        <strong id="kpi-adopted" class="stat-number">0</strong>
+
+                        <span class="stat-help">
+                            Assumidas na demonstração
+                        </span>
+                    </article>
+
+                    <button
+                        id="kpi-in-progress-card"
+                        class="stat-card stat-card-button"
+                        type="button"
+                        data-action="filter-in-progress"
+                    >
+                        <span class="stat-label">
+                            Atividades em andamento
+                        </span>
+
+                        <strong id="kpi-configuring" class="stat-number">0</strong>
+
+                        <span
+                            id="kpi-active-time"
+                            class="stat-help"
+                        >
+                            Tempo acumulado: 00:00:00
+                        </span>
+
+                        <span class="stat-help">
+                            Clique para acompanhar
+                        </span>
+                    </button>
+
+                    <article class="stat-card">
+                        <span class="stat-label">
+                            Atividades migradas
+                        </span>
+
+                        <strong id="kpi-completed" class="stat-number">0</strong>
+
+                        <span class="stat-help">
+                            Configuração finalizada
+                        </span>
+                    </article>
+
+                    <article class="stat-card">
+                        <span class="stat-label">
+                            Com impedimento
+                        </span>
+
+                        <strong id="kpi-blocked" class="stat-number">0</strong>
+
+                        <span class="stat-help">
+                            Precisam de atenção
+                        </span>
+                    </article>
+                </div>
+
+
+                <!-- BUSCA -->
+
+                <section class="panel search-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>Buscar atividade</h2>
+
+                            <p>
+                                A busca compara o termo com todos os campos
+                                importados da linha.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="search-controls">
+                        <label
+                            class="sr-only"
+                            for="activity-search"
+                        >
+                            Buscar atividade
+                        </label>
+
+                        <input
+                            id="activity-search"
+                            type="search"
+                            autocomplete="off"
+                            placeholder="ID, endereço, NETWORK, HOSTNAME..."
+                        >
+
+                        <label
+                            class="sr-only"
+                            for="status-filter"
+                        >
+                            Filtrar por status
+                        </label>
+
+                        <select id="status-filter">
+                            <option value="">Todos os status</option>
+                            <option value="PENDENTE">Pendente</option>
+                            <option value="CONTATANDO_TECNICO">
+                                Contatando técnico
+                            </option>
+                            <option value="INICIANDO_CONFIGURACAO">
+                                Iniciando configuração
+                            </option>
+                            <option value="FINALIZANDO_CONFIGURACAO">
+                                Finalizando configuração
+                            </option>
+                            <option value="TESTES_FINAIS">
+                                Realizando testes finais
+                            </option>
+                            <option value="ATIVIDADE_MIGRADA">
+                                Atividade migrada
+                            </option>
+                            <option value="IMPEDIMENTO">Impedimento</option>
+                            <option value="CANCELADA">Cancelada</option>
+                        </select>
+
+                        <label
+                            class="sr-only"
+                            for="adoption-filter"
+                        >
+                            Filtrar por adoção
+                        </label>
+
+                        <select id="adoption-filter">
+                            <option value="">
+                                Todas as atividades
+                            </option>
+                            <option value="adopted">
+                                Somente adotadas
+                            </option>
+                            <option value="in-progress">
+                                Somente em andamento
+                            </option>
+                            <option value="available">
+                                Somente disponíveis
+                            </option>
+                        </select>
+
+                        <button
+                            id="clear-search"
+                            class="button button-secondary"
+                            type="button"
+                        >
+                            Limpar
+                        </button>
+                    </div>
+
+                    <div class="table-summary">
+                        <span id="results-count">0 resultados</span>
+
+                        <span class="small-muted">
+                            Clique na linha para visualizar.
+                            Use os botões para agir.
+                        </span>
+                    </div>
+
+                    <div class="table-scroll">
+                        <table class="activity-table">
+                            <thead>
+                                <tr>
+                                    <th>IDENTIFICADOR</th>
+                                    <th>ATIVIDADE / UNIDADE</th>
+                                    <th>MUNICÍPIO</th>
+                                    <th>ANALISTA</th>
+                                    <th>TEMPO</th>
+                                    <th>STATUS / ETAPA</th>
+                                    <th>ATRIBUIÇÃO</th>
+                                    <th>AÇÕES</th>
+                                </tr>
+                            </thead>
+
+                            <tbody id="activities-table-body"></tbody>
+                        </table>
+                    </div>
+
+                    <div
+                        id="activities-empty"
+                        class="empty-state"
+                        hidden
+                    >
+                        <strong>Nenhuma atividade encontrada</strong>
+
+                        <p>
+                            Importe uma planilha ou altere os filtros
+                            da busca.
+                        </p>
+
+                        <button
+                            class="button button-primary"
+                            type="button"
+                            data-open-import
+                        >
+                            Importar planilha
+                        </button>
+                    </div>
+                </section>
+            </section>
+
+
+            <!-- ============================================
+                 IMPORTAÇÃO LOCAL
+            ============================================= -->
+
+            <section
+                id="view-import"
+                class="view"
+                hidden
+            >
+                <div class="page-heading">
+                    <p class="eyebrow">IMPORTAÇÃO LOCAL</p>
+
+                    <h1>Importar atividades</h1>
+
+                    <p class="subtitle">
+                        A planilha será lida pelo navegador.
+                        Confira a prévia antes de confirmar.
+                    </p>
+                </div>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>Selecionar arquivo</h2>
+                            <p>Compatível com Excel e CSV.</p>
+                        </div>
+
+                        <span class="file-tag">
+                            XLSX · XLS · CSV
+                        </span>
+                    </div>
+
+                    <form id="import-form" class="form-body">
+                        <label for="import-file">
+                            Arquivo do projeto
+                            <span class="required">*</span>
+                        </label>
+
+                        <input
+                            id="import-file"
+                            type="file"
+                            accept=".xlsx,.xls,.csv"
+                            required
+                        >
+
+                        <div class="privacy-note">
+                            Os dados importados são armazenados no
+                            localStorage do navegador. Não são enviados
+                            ao servidor nem compartilhados entre
+                            dispositivos nesta demonstração.
+                        </div>
+
+                        <div class="warning-note">
+                            Importe somente dados autorizados.
+                            Confira o arquivo e o projeto antes de confirmar.
+                        </div>
+
+                        <div class="form-actions">
+                            <button
+                                class="button button-primary"
+                                type="submit"
+                            >
+                                Analisar arquivo
+                            </button>
+
+                            <button
+                                class="button button-secondary"
+                                type="button"
+                                data-nav="dashboard"
+                            >
+                                Voltar ao projeto
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <section
+                    id="import-preview"
+                    class="panel preview-panel"
+                    hidden
+                >
+                    <div class="panel-heading">
+                        <div>
+                            <h2>Prévia da importação</h2>
+
+                            <p>
+                                Confira antes de adicionar ao projeto.
+                            </p>
+                        </div>
+
+                        <span
+                            id="import-preview-count"
+                            class="count-label"
+                        >
+                            0 atividades
+                        </span>
+                    </div>
+
+                    <div
+                        id="import-summary"
+                        class="preview-summary"
+                    ></div>
+
+                    <div class="table-scroll">
+                        <table class="activity-table preview-table">
+                            <thead>
+                                <tr>
+                                    <th>IDENTIFICADOR</th>
+                                    <th>ATIVIDADE / UNIDADE</th>
+                                    <th>MUNICÍPIO</th>
+                                    <th>SITUAÇÃO</th>
+                                </tr>
+                            </thead>
+
+                            <tbody id="import-preview-body"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="form-actions preview-actions">
+                        <button
+                            id="cancel-import"
+                            class="button button-secondary"
+                            type="button"
+                        >
+                            Cancelar
+                        </button>
+
+                        <button
+                            id="confirm-import"
+                            class="button button-primary"
+                            type="button"
+                            disabled
+                        >
+                            Confirmar importação
+                        </button>
+                    </div>
+                </section>
+            </section>
+
+
+            <!-- ============================================
+                 HISTÓRICO
+            ============================================= -->
+
+            <section
+                id="view-history"
+                class="view"
+                hidden
+            >
+                <div class="page-heading page-heading-row">
+                    <div>
+                        <p class="eyebrow">RASTREABILIDADE</p>
+
+                        <h1>Histórico de ações</h1>
+
+                        <p class="subtitle">
+                            Registro local das ações desta demonstração.
+                        </p>
+                    </div>
+
+                    <button
+                        id="export-history"
+                        class="button button-secondary"
+                        type="button"
+                    >
+                        Exportar CSV
+                    </button>
+                </div>
+
+                <div class="warning-note history-warning">
+                    O histórico fica salvo somente neste navegador.
+                    Não é uma auditoria compartilhada.
+                </div>
+
+                <section class="panel">
+                    <div class="search-controls history-controls">
+                        <label
+                            class="sr-only"
+                            for="history-search"
+                        >
+                            Buscar no histórico
+                        </label>
+
+                        <input
+                            id="history-search"
+                            type="search"
+                            placeholder="Buscar ação, usuário ou detalhe"
+                        >
+
+                        <label
+                            class="sr-only"
+                            for="history-action-filter"
+                        >
+                            Filtrar ação
+                        </label>
+
+                        <select id="history-action-filter">
+                            <option value="">Todas as ações</option>
+                        </select>
+
+                        <span
+                            id="history-count"
+                            class="count-label"
+                        >
+                            0 registros
+                        </span>
+                    </div>
+
+                    <div class="table-scroll">
+                        <table class="history-table">
+                            <thead>
+                                <tr>
+                                    <th>DATA</th>
+                                    <th>AÇÃO</th>
+                                    <th>USUÁRIO</th>
+                                    <th>DETALHE</th>
+                                </tr>
+                            </thead>
+
+                            <tbody id="history-body"></tbody>
+                        </table>
+                    </div>
+
+                    <div
+                        id="history-empty"
+                        class="empty-state"
+                        hidden
+                    >
+                        <strong>Nenhuma ação encontrada</strong>
+                        <p>
+                            As ações realizadas aparecerão aqui.
+                        </p>
+                    </div>
+                </section>
+            </section>
+
+        </div>
+    </main>
+
+
+    <!-- ================================================
+         JANELA DE ATRIBUIÇÃO EM MODO DEMONSTRAÇÃO
+    ================================================= -->
+
+    <dialog id="assign-dialog" class="detail-dialog">
+        <div class="dialog-heading">
+            <div>
+                <p class="eyebrow">DEMONSTRAÇÃO</p>
+
+                <h2>Atribuir atividade</h2>
+
+                <p
+                    id="assign-activity-label"
+                    class="subtitle"
+                ></p>
+            </div>
+
+            <button
+                id="assign-close"
+                class="button button-secondary"
+                type="button"
+            >
+                Fechar
+            </button>
         </div>
 
-        <section class="panel">
-          <div class="panel-heading">
-            <div>
-              <h2>Selecionar arquivo</h2>
-              <p>Compatível com Excel e CSV.</p>
-            </div>
-            <span class="file-tag">XLSX · XLS · CSV</span>
-          </div>
-
-          <form id="import-form" class="form-body">
-            <label for="import-file">
-              Arquivo do projeto <span class="required">*</span>
+        <form id="assign-form" class="form-body">
+            <label for="assign-analyst-select">
+                Analista demonstrativo
             </label>
 
-            <input id="import-file" type="file" accept=".xlsx,.xls,.csv" required>
-
-            <div class="privacy-note">
-              <strong>Privacidade:</strong>
-              para permitir a busca em todos os campos, os valores das linhas importadas
-              ficam armazenados no localStorage deste navegador. O arquivo não é enviado
-              ao servidor nem incluído no GitHub, mas outras pessoas com acesso ao mesmo
-              perfil do navegador podem consultar os dados. Importe somente arquivos autorizados.
-            </div>
-
-            <div class="warning-note">
-              As colunas da planilha serão usadas para busca e visualização de detalhes.
-              A interface não publica automaticamente esses dados, mas você deve evitar
-              importar informações que não tem autorização para armazenar localmente.
-            </div>
-
-            <div class="form-actions">
-              <button class="button button-primary" type="submit">Analisar arquivo</button>
-              <button class="button button-secondary" type="button" data-nav="dashboard">
-                Voltar ao projeto
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section id="import-preview" class="panel preview-panel" hidden>
-          <div class="panel-heading">
-            <div>
-              <h2>Prévia da importação</h2>
-              <p>Confira antes de adicionar as atividades ao projeto.</p>
-            </div>
-            <span id="import-preview-count" class="count-label">0 atividades</span>
-          </div>
-
-          <div id="import-summary" class="preview-summary"></div>
-
-          <div class="table-scroll">
-            <table class="activity-table preview-table">
-              <thead>
-                <tr>
-                  <th>IDENTIFICADOR</th>
-                  <th>ATIVIDADE / UNIDADE</th>
-                  <th>MUNICÍPIO</th>
-                  <th>SITUAÇÃO</th>
-                </tr>
-              </thead>
-              <tbody id="import-preview-body"></tbody>
-            </table>
-          </div>
-
-          <div class="form-actions preview-actions">
-            <button id="cancel-import" class="button button-secondary" type="button">
-              Cancelar
-            </button>
-            <button id="confirm-import" class="button button-primary" type="button" disabled>
-              Confirmar importação
-            </button>
-          </div>
-        </section>
-      </section>
-
-      <!-- Histórico -->
-      <section id="view-history" class="view" hidden>
-        <div class="page-heading page-heading-row">
-          <div>
-            <p class="eyebrow">RASTREABILIDADE</p>
-            <h1>Histórico de ações</h1>
-            <p class="subtitle">
-              Registro local das ações realizadas neste projeto.
-            </p>
-          </div>
-
-          <button id="export-history" class="button button-secondary" type="button">
-            Exportar CSV
-          </button>
-        </div>
-
-        <div class="warning-note history-warning">
-          Histórico demonstrativo: fica neste navegador e pode ser alterado por quem
-          tem acesso ao dispositivo. Não substitui uma auditoria segura em produção.
-        </div>
-
-        <section class="panel">
-          <div class="search-controls history-controls">
-            <label class="sr-only" for="history-search">Buscar no histórico</label>
-            <input id="history-search" type="search" placeholder="Buscar ação, usuário ou detalhe">
-
-            <label class="sr-only" for="history-action-filter">Filtrar por ação</label>
-            <select id="history-action-filter">
-              <option value="">Todas as ações</option>
+            <select id="assign-analyst-select" required>
+                <option value="">Selecione um analista</option>
             </select>
 
-            <span id="history-count" class="count-label">0 registros</span>
-          </div>
+            <p class="small-muted">
+                Esta atribuição é fictícia e não cria um usuário real.
+                O cronômetro começa quando a atividade é adotada.
+            </p>
 
-          <div class="table-scroll">
-            <table class="history-table">
-              <thead>
-                <tr>
-                  <th>DATA</th>
-                  <th>AÇÃO</th>
-                  <th>USUÁRIO</th>
-                  <th>DETALHE</th>
-                </tr>
-              </thead>
-              <tbody id="history-body"></tbody>
-            </table>
-          </div>
+            <div class="form-actions">
+                <button
+                    id="assign-submit"
+                    class="button button-primary"
+                    type="submit"
+                >
+                    Confirmar atribuição
+                </button>
 
-          <div id="history-empty" class="empty-state" hidden>
-            <strong>Nenhuma ação encontrada</strong>
-            <p>As operações realizadas neste projeto aparecerão aqui.</p>
-          </div>
-        </section>
-      </section>
-    </div>
-  </main>
+                <button
+                    id="assign-cancel"
+                    class="button button-secondary"
+                    type="button"
+                >
+                    Cancelar
+                </button>
+            </div>
+        </form>
+    </dialog>
 
-  <dialog id="assign-dialog" class="detail-dialog">
-    <div class="dialog-heading">
-      <div>
-        <p class="eyebrow">DISTRIBUIÇÃO DE TRABALHO</p>
-        <h2>Atribuir atividade</h2>
-        <p id="assign-activity-label" class="subtitle"></p>
-      </div>
-      <button id="assign-close" class="button button-secondary" type="button">
-        Fechar
-      </button>
-    </div>
 
-    <form id="assign-form" class="form-body">
-      <label for="assign-analyst-select">
-        Analista responsável
-      </label>
+    <!-- ================================================
+         DETALHES DA ATIVIDADE — SOMENTE LEITURA
+    ================================================= -->
 
-      <select id="assign-analyst-select" required>
-        <option value="">Carregando analistas…</option>
-      </select>
+    <dialog
+        id="activity-detail-dialog"
+        class="detail-dialog"
+    >
+        <div class="dialog-heading">
+            <div>
+                <p class="eyebrow">VISUALIZAÇÃO</p>
 
-      <p class="small-muted">
-        A atribuição reserva a atividade para o analista escolhido.
-        O cronômetro só começa quando ele entrar no sistema e adotar
-        a atividade.
-      </p>
+                <h2 id="detail-title">
+                    Detalhes da atividade
+                </h2>
 
-      <div class="form-actions">
-        <button id="assign-submit" class="button button-primary" type="submit">
-          Confirmar atribuição
-        </button>
+                <p
+                    id="detail-subtitle"
+                    class="subtitle"
+                ></p>
+            </div>
 
-        <button id="assign-cancel" class="button button-secondary" type="button">
-          Cancelar
-        </button>
-      </div>
-    </form>
-  </dialog>
+            <button
+                id="close-detail"
+                class="button button-secondary"
+                type="button"
+            >
+                Fechar
+            </button>
+        </div>
 
-  <!-- Visualização da atividade: somente leitura, sem adoção automática -->
-  <dialog id="activity-detail-dialog" class="detail-dialog">
-    <div class="dialog-heading">
-      <div>
-        <p class="eyebrow">VISUALIZAÇÃO</p>
-        <h2 id="detail-title">Detalhes da atividade</h2>
-        <p id="detail-subtitle" class="subtitle"></p>
-      </div>
-      <button id="close-detail" class="button button-secondary" type="button">
-        Fechar
-      </button>
-    </div>
+        <div
+            id="activity-detail-fields"
+            class="detail-fields"
+        ></div>
 
-    <div id="activity-detail-fields" class="detail-fields"></div>
+        <div class="detail-footer">
+            Esta tela é somente para visualização.
+            Abrir os detalhes não adota a atividade.
+        </div>
+    </dialog>
 
-    <div class="detail-footer">
-      Esta tela é somente para visualização. Para assumir a atividade,
-      feche os detalhes e use “Adotar atividade” na linha correspondente.
-    </div>
-  </dialog>
 
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <div
+        id="toast"
+        class="toast"
+        role="status"
+        aria-live="polite"
+        hidden
+    ></div>
+
 </body>
-
 </html>
